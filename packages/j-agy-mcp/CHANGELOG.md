@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.0 - 2026-09-01
+## 1.1.1 - 2026-09-01
 
 - 新增后台任务模式:`agy_prompt` / `agy_conversation` 支持 `background: true`,调用立即返回 `task_id`(毫秒级);新增 `agy_status` 工具轮询任务状态——running 附增量输出尾部,done 返回完整结果,error 返回错误详情与日志路径。用于绕开 ZCode 等客户端对单次工具调用的 30s 硬超时(AGY 真实任务常需数分钟)
 
