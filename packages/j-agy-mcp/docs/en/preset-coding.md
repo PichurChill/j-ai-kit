@@ -6,7 +6,7 @@
 
 Implementation is done by the main agent itself by default. Dispatch to j-agy (`agy_prompt` / `agy_conversation`) only in any of these cases:
 
-1. **The main agent's built-in subagent tools are unavailable or broken**;
+1. **The main agent's built-in subagent tools are unavailable or broken** — on errors, cancellations, or quota problems switch to j-agy directly instead of retrying the built-in tools in place;
 2. **Protecting the main context**: the implementation is tedious mechanical bulk work (large repetitive edits, peripheral scripts) whose noise would pollute the main context;
 3. **The user explicitly asks** to hand this task or session's implementation to j-agy.
 

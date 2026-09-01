@@ -11,6 +11,8 @@ Use j-agy (`agy_prompt`) for image understanding only in any of these cases:
 3. **Native reading is unreliable**: the same question yields no answer or contradictory answers across attempts;
 4. **The user explicitly asks** to use j-agy for this task or session.
 
+When native reading fails, **dispatch directly** — do not fiddle with indirect substitutes (metadata extraction, transcoded descriptions) first; those cannot produce visual judgment and only slow the fallback.
+
 ## Capability boundaries (verified in practice)
 
 - AGY (Gemini-based, multimodal) can open local image files with its file-reading tools and describe them: scene description, UI layout inventory, text inside the image, locating elements — all workable;

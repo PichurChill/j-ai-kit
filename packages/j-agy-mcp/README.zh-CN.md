@@ -38,11 +38,17 @@
 
 ## 使用预设:让 j-agy 干不同的活
 
-j-agy 本身不带角色——AGY 干什么,由派发时的任务描述与你的项目规范(如 AGENTS.md)决定。三个常见用法各有完整可直接复制的 AGENTS.md 片段:
+j-agy 本身不带角色——AGY 干什么,由派发时的任务描述与你的项目规范(如 AGENTS.md)决定。三种常见用法,各提供两种接法,**同一场景二选一,不要同时配置**(双规则会让行为不一致):
+
+**AGENTS.md 路线** —— 把规则片段贴进你的 AGENTS.md,主代理亲自调 `agy_prompt` 派发:
 
 - [搜索后端](https://github.com/PichurChill/j-ai-kit/tree/main/packages/j-agy-mcp/docs/preset-search.md) — 自带搜索额度用完、故障、结果不满意或主动要求时,当第二搜索出口(不强制,内置优先)
 - [识图后端](https://github.com/PichurChill/j-ai-kit/tree/main/packages/j-agy-mcp/docs/preset-vision.md) — 主模型无多模态、识图故障或失败时的替补(有眼睛先用眼睛)
 - [编码子代理](https://github.com/PichurChill/j-ai-kit/tree/main/packages/j-agy-mcp/docs/preset-coding.md) — 内置子代理不可用、需要保护主上下文或主动要求时外包实现(默认自己写)
+
+**子代理路线** —— 把现成定义复制到 `~/.zcode/agents/`(ZCode,重启生效),主代理按 description 自动派发,执行过程在子代理独立上下文中:
+
+- [搜索子代理](./docs/agents/search-agent.md) · [识图子代理](./docs/agents/vision-agent.md) · [编码子代理](./docs/agents/coder-agent.md)
 
 ## 安装与配置
 

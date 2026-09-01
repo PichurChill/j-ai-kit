@@ -38,11 +38,17 @@ Parameters shared by `agy_prompt` / `agy_conversation`:
 
 ## Usage presets
 
-j-agy ships no role of its own — what AGY does is decided by the task prompt and your project conventions (e.g. AGENTS.md). Three common setups each come with a ready-to-copy AGENTS.md snippet (docs in Chinese):
+j-agy ships no role of its own — what AGY does is decided by the task prompt and your project conventions (e.g. AGENTS.md). Three common setups, each in two flavors — **pick one per scenario, never both** (competing rules make behavior inconsistent):
+
+**AGENTS.md route** — paste the rules into your AGENTS.md; the main agent dispatches `agy_prompt` itself:
 
 - [Search backend](https://github.com/PichurChill/j-ai-kit/tree/main/packages/j-agy-mcp/docs/en/preset-search.md) — a second search outlet when built-in search is out of quota, broken, or unsatisfying; built-in first, never forced
 - [Vision backend](https://github.com/PichurChill/j-ai-kit/tree/main/packages/j-agy-mcp/docs/en/preset-vision.md) — a fallback when the main model has no multimodal input or image reading fails; use your own eyes first
 - [Coding subagent](https://github.com/PichurChill/j-ai-kit/tree/main/packages/j-agy-mcp/docs/en/preset-coding.md) — outsource implementation when built-in subagents are unavailable or the main context needs protection; the main agent writes code by default
+
+**Subagent route** — copy the ready-made agent definition into `~/.zcode/agents/` (ZCode, restart to load); the main agent auto-dispatches by description, and execution runs in the subagent's isolated context:
+
+- [Search agent](./docs/agents/search-agent.md) · [Vision agent](./docs/agents/vision-agent.md) · [Coding agent](./docs/agents/coder-agent.md)
 
 ## Install & Configure
 
