@@ -189,8 +189,8 @@ export async function executeAgy(options: ExecuteAgyOptions): Promise<AgyResult>
   });
 }
 
-/** 查询 agy 可用模型列表(透传 `agy models` 的 stdout)。 */
-export async function listAgyModels(timeoutSeconds = 15): Promise<string> {
+/** 查询 agy 可用模型列表(透传 `agy models` 的 stdout)。agy 启动含认证连网,实测约 7s,余量放宽到 30s。 */
+export async function listAgyModels(timeoutSeconds = 30): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const child = spawn(agyBin(), ["models"], {
       stdio: ["ignore", "pipe", "pipe"],
