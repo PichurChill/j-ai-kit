@@ -1,5 +1,7 @@
 # j-ai-kit
 
+English | [中文文档](./README.zh-CN.md)
+
 PichurChill's AI toolkit monorepo — MCP servers, skills, and other small AI helpers. Every package under `packages/` is an independent npm package with its own version and changelog; publish them separately from their directories.
 
 English | 中文说明见各包内的 `README.zh-CN.md`。
