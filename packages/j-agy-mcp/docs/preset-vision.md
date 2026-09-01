@@ -22,6 +22,7 @@
 ## 怎么派发
 
 - 工具:`agy_prompt`;`effort` 一般传 `medium`。
+- **ZCode 用户**:ZCode 30 秒即掐断单次工具调用,而看图描述往往超时——显式传 `background: true` 启动,用 `agy_status` 轮询至 done(需 j-agy-mcp ≥ 1.1.0)。
 
 ```text
 用你的文件读取工具打开本地图片:<绝对路径>

@@ -12,6 +12,7 @@ The server itself injects no behavior — what role AGY plays (read-only scout o
 |:---|:---|
 | `agy_prompt` | Dispatch a self-contained task and wait for the final result. AGY's context is independent from the main agent, so the task description must state the goal, directories, and acceptance criteria. Returns a `conversation_id` for follow-ups |
 | `agy_conversation` | Continue an existing conversation. Execution parameters are identical to `agy_prompt` (cwd, mode, model control are not lost) |
+| `agy_status` | Poll a background task started with `background: true`: `running` (with incremental output tail) / `done` (full result) / `error` |
 | `agy_models` | List models available in the current environment |
 
 Parameters shared by `agy_prompt` / `agy_conversation`:
@@ -25,6 +26,7 @@ Parameters shared by `agy_prompt` / `agy_conversation`:
 | `effort` | `high` | Reasoning effort; ignored when the model name already carries an effort suffix |
 | `skip_permissions` | `true` | Auto-approve all permission requests |
 | `sandbox` | `true` | Enable the terminal sandbox |
+| `background` | `false` | Return a `task_id` immediately and poll with `agy_status` — required on clients with hard tool-call timeouts (ZCode kills calls at 30s; real AGY tasks take minutes) |
 | `timeout_seconds` | `300` | Timeout in seconds (1–3600) |
 
 ## Features

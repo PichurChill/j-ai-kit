@@ -1,6 +1,6 @@
 {
   "name": "j-agy-mcp",
-  "version": "1.0.1",
+  "version": "1.1.1",
   "description": "MCP server that wraps the Antigravity CLI (agy) as tools — lets CodeX / Claude Code dispatch exploration or coding tasks to AGY as an external subagent.",
   "license": "MIT",
   "repository": {
@@ -20,6 +20,7 @@
   "files": [
     "dist",
     "docs",
+    "CHANGELOG.md",
     "README.md",
     "README.zh-CN.md"
   ],

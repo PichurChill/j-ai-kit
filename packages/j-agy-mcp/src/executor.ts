@@ -8,6 +8,7 @@
  */
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { randomBytes } from "node:crypto";
 
 export const DEFAULT_MODEL = "Gemini 3.7 Flash (High)";
 export const DEFAULT_EFFORT = "high";
@@ -223,4 +224,65 @@ export async function listAgyModels(timeoutSeconds = 30): Promise<string> {
       }
     });
   });
+}
+
+// ---- 后台任务模式 ----
+// ZCode 等客户端对单次工具调用有硬超时(如 30s),而 AGY 真实任务常需数分钟。
+// background 模式:启动后立即返回 task_id,调用方用 agy_status 轮询直至完成。
+
+export interface AgyTask {
+  id: string;
+  kind: "prompt" | "conv";
+  status: "running" | "done" | "error";
+  startedAt: string;
+  /** done 时为 AGY 的 result(含其自身的 SUCCESS/ERROR 状态);error 时无。 */
+  result?: AgyResult;
+  /** error 时为执行层错误消息(含 stderr 尾部/日志路径)。 */
+  error?: string;
+  /** AGY 执行期间产生的增量文本(来自 step_update),供轮询时展示进度。 */
+  partialText: string;
+}
+
+const backgroundTasks = new Map<string, AgyTask>();
+
+export function getAgyTask(taskId: string): AgyTask | undefined {
+  return backgroundTasks.get(taskId);
+}
+
+/**
+ * 后台启动一次 AGY 执行:立即返回任务对象,进程在后台运行,
+ * 完成时由内部回调把 result / error 写回任务对象(供 agy_status 轮询读取)。
+ * onDelta 与 executeAgy 的 onEvent 不同:只回传文本增量,由调用方决定去向(日志/进度)。
+ */
+export function startAgyTask(
+  options: ExecuteAgyOptions,
+  kind: "prompt" | "conv",
+  onDelta?: (text: string) => void,
+): AgyTask {
+  const id = `${kind}-${Date.now()}-${randomBytes(3).toString("hex")}`;
+  const task: AgyTask = { id, kind, status: "running", startedAt: new Date().toISOString(), partialText: "" };
+  backgroundTasks.set(id, task);
+  void executeAgy({
+    ...options,
+    onEvent: (event) => {
+      const delta = event.event === "step_update"
+        ? (event.step_update as { text_delta?: unknown } | undefined)?.text_delta
+        : undefined;
+      if (typeof delta === "string" && delta) {
+        task.partialText += delta;
+        onDelta?.(delta);
+      }
+      options.onEvent?.(event);
+    },
+  }).then(
+    (result) => {
+      task.result = result;
+      task.status = "done";
+    },
+    (err: unknown) => {
+      task.error = err instanceof Error ? err.message : String(err);
+      task.status = "error";
+    },
+  );
+  return task;
 }

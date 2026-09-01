@@ -15,6 +15,8 @@ Search follows a fixed fallback chain: **built-in WebSearch → j-agy → WebFet
 
 Note: AGY behind j-agy is a separate process with its own network path. When the main agent's network is restricted, AGY may still work — that makes it a genuine second outlet, not a duplicate of the first one.
 
+> **ZCode users**: ZCode kills any single tool call after 30 seconds (hard-coded, not configurable), while a real search takes AGY minutes — a synchronous `agy_prompt` call will always time out. Two fixes: go the subagent route and have the sub-agent start the task with `background: true`, polling `agy_status` (requires j-agy-mcp ≥ 1.1.0, see `docs/agents/search-agent.md`); or pass `background: true` explicitly when calling from the main agent.
+
 ## How to dispatch
 
 - Tool: `agy_prompt`; `effort` is usually `medium`, or `high` for deep research.

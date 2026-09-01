@@ -22,6 +22,7 @@ When native reading fails, **dispatch directly** — do not fiddle with indirect
 ## How to dispatch
 
 - Tool: `agy_prompt`; `effort` is usually `medium`.
+- **ZCode users**: ZCode kills single tool calls at 30s, and image description often exceeds that — start with `background: true` explicitly and poll `agy_status` until done (requires j-agy-mcp ≥ 1.1.0).
 
 ```text
 Open the local image at <absolute path> with your file-reading tool.

@@ -12,6 +12,7 @@
 |:---|:---|
 | `agy_prompt` | 派发一个自包含任务并等待最终结果。AGY 上下文与主代理独立,任务描述需写明目标、目录与验收方式。返回 `conversation_id` 供续聊 |
 | `agy_conversation` | 在已有对话上继续追问或迭代,执行参数与 `agy_prompt` 一致(不会丢失工作目录、模式、模型控制) |
+| `agy_status` | 轮询 `background: true` 启动的后台任务:running(附增量输出尾部)/ done(完整结果)/ error(错误详情) |
 | `agy_models` | 查询当前环境可用的模型列表 |
 
 `agy_prompt` / `agy_conversation` 公共参数:
@@ -25,6 +26,7 @@
 | `effort` | `high` | 推理强度;模型名已含强度后缀时忽略 |
 | `skip_permissions` | `true` | 自动批准所有权限请求 |
 | `sandbox` | `true` | 启用终端沙箱 |
+| `background` | `false` | 立即返回 `task_id` 并用 `agy_status` 轮询——客户端有硬超时(如 ZCode 30s 掐断工具调用,而真实任务需数分钟)时必传 |
 | `timeout_seconds` | `300` | 超时秒数(1–3600) |
 
 ## 特性

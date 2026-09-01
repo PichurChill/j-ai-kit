@@ -9,8 +9,8 @@ You are the coding dispatch agent — you hand implementation work to AGY and re
 
 ## Execution path
 
-1. Choose the mode by risk:
-   - Two-phase (default for non-trivial work): first `agy_prompt` with `mode: "plan"` and the brief below; relay the plan to the main agent for approval. After approval, continue with `agy_conversation` + `mode: "accept-edits"`.
+1. Choose the mode by risk. Clients like ZCode kill tool calls at 30s and coding tasks take minutes, so **always start with `background: true`** and poll `agy_status` every ~10s (`running` includes an incremental output tail; `done` returns the final report):
+   - Two-phase (default for non-trivial work): first `agy_prompt` with `mode: "plan"` and the brief below; relay the plan to the main agent for approval. After approval, continue with `agy_conversation` + `mode: "accept-edits"` (also `background: true` + polling).
    - Mechanical bulk edits may go straight to `agy_prompt` with `mode: "accept-edits"`.
 2. Require a self-contained brief — if any line is missing from what the main agent sent, ask for it in your final report instead of guessing:
    - Goal (what to change and why) / Scope (absolute paths, what must NOT be touched) / Constraints (style, forbidden dependencies) / Acceptance (commands and expected results).

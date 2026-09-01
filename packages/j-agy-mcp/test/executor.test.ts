@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { AgyLaunchError, executeAgy } from "../src/executor.js";
+import { AgyLaunchError, executeAgy, getAgyTask, startAgyTask } from "../src/executor.js";
 import { installMockAgy } from "./helpers/mock-agy.js";
 
 let mockBinDir: string;
@@ -11,6 +11,17 @@ let originalPath: string;
 
 function setScenario(scenario: string): void {
   process.env.MOCK_AGY_SCENARIO = scenario;
+}
+
+/** 轮询等待后台任务离开 running 状态。 */
+async function waitForTask(id: string, timeoutMs = 5000) {
+  const start = Date.now();
+  for (;;) {
+    const task = getAgyTask(id);
+    if (task && task.status !== "running") return task;
+    if (Date.now() - start > timeoutMs) throw new Error("后台任务超时未完成");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }
 
 beforeAll(() => {
@@ -90,5 +101,32 @@ describe("executeAgy(fake agy)", () => {
   it("PATH 中无 agy 时报启动失败", async () => {
     process.env.PATH = emptyBinDir;
     await expect(executeAgy({ prompt: "hi" })).rejects.toBeInstanceOf(AgyLaunchError);
+  });
+});
+
+describe("startAgyTask(后台任务)", () => {
+  it("启动即 running,完成后 done 且增量文本被收集", async () => {
+    process.env.PATH = `${mockBinDir}${path.delimiter}${originalPath}`;
+    setScenario("success");
+    const task = startAgyTask({ prompt: "hi" }, "prompt");
+    expect(task.status).toBe("running");
+    const done = await waitForTask(task.id);
+    expect(done.status).toBe("done");
+    expect(done.result?.status).toBe("SUCCESS");
+    expect(done.result?.response).toBe("你好");
+    expect(done.partialText).toContain("你好");
+  });
+
+  it("后台任务失败路径:非零退出最终 error 且带错误详情", async () => {
+    process.env.PATH = `${mockBinDir}${path.delimiter}${originalPath}`;
+    setScenario("exit-nonzero");
+    const task = startAgyTask({ prompt: "hi" }, "conv");
+    const done = await waitForTask(task.id);
+    expect(done.status).toBe("error");
+    expect(done.error).toContain("code=3");
+  });
+
+  it("未知任务 ID 查询返回 undefined", () => {
+    expect(getAgyTask("不存在")).toBeUndefined();
   });
 });

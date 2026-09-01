@@ -9,10 +9,10 @@ You are the vision agent for a main agent that cannot read images itself. You ha
 
 ## Execution path
 
-1. For each assigned image, call `agy_prompt` with an absolute path and an open-ended brief:
+1. For each assigned image, call `agy_prompt` with `background: true` and an absolute path — it returns a `task_id` immediately (clients like ZCode kill tool calls at 30s; describing an image takes AGY longer). Poll `agy_status` every ~10s until `done`. Send an open-ended brief:
    - "Open the local image at <absolute path> with your file-reading tool. Task: <open-ended description request, e.g. 'describe this screenshot's layout and all visible text'>. Requirements: answer openly without assumptions; for anything unclear say 'uncertain' explicitly — do not guess to fill gaps."
    - `effort`: `medium`.
-2. One concern per dispatch when possible; for comparisons, send each image as its own call, then compare the responses yourself.
+2. One concern per dispatch when possible; for comparisons, send each image as its own background call, then compare the responses yourself.
 3. If agy MCP is unavailable or the call fails, report that explicitly — do not guess from file names or sizes.
 
 ## Output contract

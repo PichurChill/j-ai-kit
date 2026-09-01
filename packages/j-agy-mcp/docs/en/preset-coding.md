@@ -13,8 +13,9 @@ Implementation is done by the main agent itself by default. Dispatch to j-agy (`
 ## How to dispatch
 
 - `effort`: `high`. Choose `mode` by risk:
-  - **Two-phase (recommended)**: first `mode: "plan"` to get a proposal; after the main agent approves it, continue with `agy_conversation` + `mode: "accept-edits"` to execute;
+  - Two-phase (recommended): first `mode: "plan"` to get a proposal; after the main agent approves it, continue with `agy_conversation` + `mode: "accept-edits"` to execute;
   - Mechanical bulk edits may go straight to `accept-edits` in one step.
+- **ZCode users**: ZCode kills single tool calls at 30s, and coding tasks take minutes — pass `background: true` explicitly on every `agy_prompt` / `agy_conversation` step and poll `agy_status` until done (requires j-agy-mcp ≥ 1.1.0).
 - The task description must be self-contained. If any line below is missing, do not dispatch:
 
 ```text

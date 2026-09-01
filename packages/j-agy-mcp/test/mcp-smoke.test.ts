@@ -80,10 +80,10 @@ afterAll(() => {
 });
 
 describe("MCP stdio 冒烟", () => {
-  it("tools/list 注册三个工具", async () => {
+  it("tools/list 注册四个工具", async () => {
     const response = await request(2, "tools/list", {});
     const names = response.result.tools.map((tool: { name: string }) => tool.name).sort();
-    expect(names).toEqual(["agy_conversation", "agy_models", "agy_prompt"]);
+    expect(names).toEqual(["agy_conversation", "agy_models", "agy_prompt", "agy_status"]);
   });
 
   it("agy_models 透传模型列表", async () => {
@@ -107,5 +107,45 @@ describe("MCP stdio 冒烟", () => {
     });
     expect(response.result.isError).toBeUndefined();
     expect(response.result.content[0].text).toBe("你好");
+  });
+
+  it("background 全链路:启动即返回 task_id,agy_status 轮询至 done", async () => {
+    const started = await request(6, "tools/call", {
+      name: "agy_prompt",
+      arguments: { prompt: "后台测试", background: true },
+    });
+    const startedText = started.result.content[0].text;
+    expect(startedText).toContain("status: running");
+    const taskId = /task_id: (\S+)/.exec(startedText)![1];
+
+    let done = false;
+    let finalText = "";
+    for (let i = 0; i < 25 && !done; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const status = await request(100 + i, "tools/call", {
+        name: "agy_status",
+        arguments: { task_id: taskId },
+      });
+      const text = status.result.content[0].text as string;
+      if (text.startsWith("status: done")) {
+        done = true;
+        // done 时 content = [状态行, response, 元数据]
+        finalText = [text, status.result.content[1]?.text, status.result.content[2]?.text]
+          .filter(Boolean)
+          .join("\n");
+      }
+    }
+    expect(done).toBe(true);
+    expect(finalText).toContain("你好");
+    expect(finalText).toContain("conversation_id: c-1");
+  });
+
+  it("agy_status 查询未知任务 ID 返回错误", async () => {
+    const response = await request(7, "tools/call", {
+      name: "agy_status",
+      arguments: { task_id: "prompt-nonexistent" },
+    });
+    expect(response.result.isError).toBe(true);
+    expect(response.result.content[0].text).toContain("未知任务 ID");
   });
 });

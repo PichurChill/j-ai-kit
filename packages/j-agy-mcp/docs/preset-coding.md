@@ -15,6 +15,7 @@
 - `effort` 传 `high`;`mode` 按风险选择:
   - **两段式(推荐)**:先 `mode: "plan"` 让它出方案,主代理审过方案后再用 `agy_conversation` + `mode: "accept-edits"` 执行;
   - 机械批量修改可直接 `accept-edits` 一步到位。
+- **ZCode 用户**:ZCode 30 秒即掐断单次工具调用,而编码任务常需数分钟——每一步 `agy_prompt` / `agy_conversation` 都显式传 `background: true` 启动,用 `agy_status` 轮询至完成(需 j-agy-mcp ≥ 1.1.0)。
 - 任务描述必须自包含,缺一样就别派:
 
 ```text

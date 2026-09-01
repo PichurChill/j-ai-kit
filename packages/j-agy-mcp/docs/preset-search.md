@@ -15,6 +15,8 @@
 
 补充:j-agy 背后的 AGY 是独立进程、独立网络出口。主代理侧网络受限时它可能仍然可用,因此「自带搜不到」时它是天然的第二出口,而不是平行的重复选项。
 
+> **ZCode 用户注意**:ZCode 对单次工具调用有 30 秒硬超时(不可配置),而真实搜索任务 AGY 要跑数分钟——同步调用 `agy_prompt` 必然超时。两种解法:走子代理路线并让子代理以 `background: true` 启动任务、用 `agy_status` 轮询(需 j-agy-mcp ≥ 1.1.0,见 `docs/agents/search-agent.md`);或在主代理直接调用时显式传 `background: true`。
+
 ## 怎么派发
 
 - 工具:`agy_prompt`;`effort` 一般传 `medium`,深度调研传 `high`。
