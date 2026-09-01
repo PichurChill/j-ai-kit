@@ -1,0 +1,14 @@
+{
+  "name": "j-ai-kit",
+  "private": true,
+  "description": "PichurChill's AI toolkit monorepo: MCP servers and small AI helpers. Each package is versioned and published to npm independently.",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "npm test --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

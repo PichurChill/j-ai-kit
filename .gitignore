@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.j-can-see/
+# npm 发布凭据,只留本地
+.npmrc
+# 个人开发规则,只留本地
+DEV_RULES.MD

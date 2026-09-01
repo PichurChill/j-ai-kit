@@ -1,0 +1,69 @@
+{
+  "name": "j-can-see",
+  "version": "0.7.1",
+  "description": "MCP server that gives text-only AI coding agents a vision toolkit: describe/OCR images, locate elements with pixel coordinates, diff images, pick exact colors, trace SVGs — for clients whose primary model has no multimodal input.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PichurChill/j-ai-kit.git",
+    "directory": "packages/j-can-see"
+  },
+  "homepage": "https://github.com/PichurChill/j-ai-kit/tree/main/packages/j-can-see#readme",
+  "bugs": {
+    "url": "https://github.com/PichurChill/j-ai-kit/issues"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "j-can-see": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "hooks",
+    "README.md",
+    "README.zh-CN.md",
+    "SKILL.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
+    "test": "npm run typecheck && vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build && npm run typecheck",
+    "publish:official": "npm publish --registry=https://registry.npmjs.org/"
+  },
+  "dependencies": {
+    "@image-tracer-ts/core": "^1.0.2",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "image-size": "^2.0.0",
+    "jimp": "^1.6.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "vision",
+    "image",
+    "ocr",
+    "claude-code",
+    "codex",
+    "grok",
+    "locate",
+    "inspect",
+    "image-diff",
+    "color-picker",
+    "svg",
+    "vectorize",
+    "ui-restoration"
+  ]
+}

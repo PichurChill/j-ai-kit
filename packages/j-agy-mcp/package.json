@@ -1,0 +1,55 @@
+{
+  "name": "j-agy-mcp",
+  "version": "1.0.0",
+  "description": "MCP server that wraps the Antigravity CLI (agy) as tools — lets CodeX / Claude Code dispatch exploration or coding tasks to AGY as an external subagent.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PichurChill/j-ai-kit.git",
+    "directory": "packages/j-agy-mcp"
+  },
+  "homepage": "https://github.com/PichurChill/j-ai-kit/tree/main/packages/j-agy-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/PichurChill/j-ai-kit/issues"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "j-agy-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "docs",
+    "README.md",
+    "README.zh-CN.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
+    "test": "npm run typecheck && npm run build && vitest run",
+    "prepublishOnly": "npm run build && npm run typecheck"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "antigravity",
+    "agy",
+    "gemini",
+    "subagent",
+    "claude-code",
+    "codex"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "zod": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.0"
+  }
+}
