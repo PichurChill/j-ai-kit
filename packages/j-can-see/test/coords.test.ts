@@ -4,6 +4,7 @@ import {
   toOriginal,
   clampBox,
   formatBox,
+  positionLabel,
 } from "../src/tools/coords.js";
 
 describe("extractBoxByLabel", () => {
@@ -106,5 +107,20 @@ describe("clampBox", () => {
       x2: 100,
       y2: 80,
     });
+  });
+});
+
+describe("positionLabel（九宫格方位）", () => {
+  const box = (x1: number, y1: number, x2: number, y2: number) => ({ x1, y1, x2, y2 });
+  it("四角与中心", () => {
+    expect(positionLabel(box(0, 0, 10, 10), 100, 90)).toBe("top-left");
+    expect(positionLabel(box(90, 0, 100, 10), 100, 90)).toBe("top-right");
+    expect(positionLabel(box(0, 80, 10, 90), 100, 90)).toBe("bottom-left");
+    expect(positionLabel(box(90, 80, 100, 90), 100, 90)).toBe("bottom-right");
+    expect(positionLabel(box(45, 40, 55, 50), 100, 90)).toBe("center");
+  });
+  it("跨边界的框按中心判定", () => {
+    expect(positionLabel(box(0, 40, 10, 50), 100, 90)).toBe("left");
+    expect(positionLabel(box(0, 60, 100, 80), 100, 90)).toBe("bottom");
   });
 });

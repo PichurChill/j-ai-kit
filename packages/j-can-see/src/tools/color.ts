@@ -105,6 +105,72 @@ export function createColorClusters(): ColorClusterAccumulator {
   };
 }
 
+/**
+ * 近邻簇后合并：把彼此最大通道差 ≤ tolerance 的簇并成一个（加权均值）。
+ *
+ * 固定网格量化会把渐变/照片的主色打散成多个相邻小簇（color.ts 顶部已注明该局限）——
+ * 后合并让"同一段渐变"收敛为一个簇，占比恢复参考价值。合并按像素数降序贪心：
+ * 每个簇并入第一个满足容差的已并簇；无命中则自立门户。均值仍是簇内真实颜色
+ * 的加权平均，不破坏"量化值只作聚类键"的约定。
+ */
+export function mergeClusters(
+  clusters: readonly ColorCluster[],
+  tolerance = 8,
+): ColorCluster[] {
+  const merged: { rSum: number; gSum: number; bSum: number; n: number }[] = [];
+  for (const cl of [...clusters].sort((p, q) => q.count - p.count)) {
+    const hit = merged.find(
+      (m) =>
+        linearColorDiff(
+          { r: m.rSum / m.n, g: m.gSum / m.n, b: m.bSum / m.n },
+          cl.rgb,
+        ) <= tolerance,
+    );
+    if (hit) {
+      hit.rSum += cl.rgb.r * cl.count;
+      hit.gSum += cl.rgb.g * cl.count;
+      hit.bSum += cl.rgb.b * cl.count;
+      hit.n += cl.count;
+    } else {
+      merged.push({
+        rSum: cl.rgb.r * cl.count,
+        gSum: cl.rgb.g * cl.count,
+        bSum: cl.rgb.b * cl.count,
+        n: cl.count,
+      });
+    }
+  }
+  return merged
+    .sort((p, q) => q.n - p.n)
+    .map((m) => ({
+      rgb: { r: m.rSum / m.n, g: m.gSum / m.n, b: m.bSum / m.n },
+      count: m.n,
+    }));
+}
+
+/** 采样图片四角与边缘中点，取出现最多的颜色作为背景估计（簇内真实均值） */
+export function sampleBackgroundCorners(
+  data: Uint8Array | Buffer,
+  w: number,
+  h: number,
+): Rgb {
+  const pts: ReadonlyArray<readonly [number, number]> = [
+    [0, 0],
+    [w - 1, 0],
+    [0, h - 1],
+    [w - 1, h - 1],
+    [Math.floor(w / 2), 0],
+    [0, Math.floor(h / 2)],
+  ];
+  const clusters = createColorClusters();
+  for (const [x, y] of pts) {
+    const idx = (y * w + x) * 4;
+    clusters.add(data[idx], data[idx + 1], data[idx + 2]);
+  }
+  // 采样点恒 ≥ 1，result() 必非空
+  return clusters.result()[0].rgb;
+}
+
 // ---------- 颜色剖面（colors 的 profile 模式） ----------
 
 /** 剖面每条线（行/列）的最大采样数：主色统计是抽样统计，不需要全量像素 */

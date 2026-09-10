@@ -6,12 +6,17 @@
  * - extract_fg：把图标前景从背景中分离，输出透明 PNG。
  */
 import { z } from "zod";
+import { ResizeStrategy } from "jimp";
 import { ImageTracer } from "@image-tracer-ts/core";
 import type { BaseConfig } from "../config.js";
 import { decodeJimp, resolveRegion } from "../image.js";
 import { readSource } from "../sources/index.js";
 import { expandPath } from "../sources/file.js";
-import { createColorClusters, hexToRgb, linearColorDiff, type Rgb } from "./color.js";
+import {
+  sampleBackgroundCorners,
+  hexToRgb,
+  linearColorDiff,
+} from "./color.js";
 import { writeOutput, deriveDefaultOutput, OUTPUT_PATH_CONVENTION } from "./output.js";
 import {
   limitsOf,
@@ -23,6 +28,41 @@ import {
 } from "./types.js";
 
 // ---------- trace ----------
+
+/**
+ * 自动放大阈值：短边小于此值的图先放大再描摹 —— 矢量化器的 speckle 过滤
+ * 会把 1x 下的小图标直接打成空（30px 图标放大后才能干净出形）。
+ * （avt trace 的 TARGET_MIN_SIDE 同源论据）
+ */
+const TRACE_MIN_SIDE = 256;
+
+/**
+ * 把 SVG 根元素的 width/height 设为指定尺寸（缺失则插入；viewBox 不动，
+ * 渲染器按 viewBox→width 比例缩放）。image-tracer 的输出只有 viewBox、
+ * 无 width/height —— 放大描摹后若不写回，渲染尺寸会是放大图的。
+ */
+function rescaleSvgSize(svg: string, w: number, h: number): string {
+  return svg.replace(/<svg\b([^>]*)>/, (_m, attrs: string) => {
+    let fixed = attrs;
+    if (/\swidth="[\d.]+"/.test(fixed)) {
+      fixed = fixed.replace(/\swidth="[\d.]+"/, ` width="${w}"`);
+    } else {
+      fixed = ` width="${w}"${fixed}`;
+    }
+    if (/\sheight="[\d.]+"/.test(fixed)) {
+      fixed = fixed.replace(/\sheight="[\d.]+"/, ` height="${h}"`);
+    } else {
+      fixed = ` height="${h}"${fixed}`;
+    }
+    return `<svg${fixed}>`;
+  });
+}
+
+/** 0-path 时的恢复阶梯（按成本从低到高），避免调用方退回"凭感觉猜形状" */
+const TRACE_EMPTY_RECOVERY =
+  "描摹结果为空（没有任何路径在二值化后存活）。依次尝试：" +
+  "① 传更小的 region 收紧到图形本体；② 换成亮色系图或预先反转（浅色图形在浅背景上会被当背景剔除）；" +
+  "③ 提高 colors（调色板更大，牺牲简洁）；④ 照片/复杂渐变不适合 trace —— 这是算法边界，不要硬试。";
 
 export const traceSchema = z.object({
   source: singleSourceSchema,
@@ -86,6 +126,17 @@ export const TRACE_TOOL: LocalToolEntry<TraceArgs> = {
       image.crop({ x: box.x, y: box.y, w: box.w, h: box.h });
     }
 
+    // 小图自动放大再描摹（speckle 过滤会打掉 1x 小图标）；
+    // 记下原始尺寸，描摹后把 SVG 的 width/height 写回原图尺寸（viewBox 保持放大坐标）
+    const origW = image.width;
+    const origH = image.height;
+    const minSide = Math.min(origW, origH);
+    let traceScale = 1;
+    if (minSide < TRACE_MIN_SIDE) {
+      traceScale = Math.max(2, Math.ceil(TRACE_MIN_SIDE / minSide));
+      image.scale({ f: traceScale, mode: ResizeStrategy.BICUBIC });
+    }
+
     const pixels = image.bitmap.data;
     const input: TracerImageData = {
       data: new Uint8ClampedArray(
@@ -98,14 +149,32 @@ export const TRACE_TOOL: LocalToolEntry<TraceArgs> = {
     };
 
     const tracer = new ImageTracer({ numberOfColors: args.colors ?? 16 });
-    const svg = tracer.traceImageToSvg(input as never);
+    let svg = tracer.traceImageToSvg(input as never);
+    if (traceScale > 1) {
+      svg = rescaleSvgSize(svg, origW, origH);
+    }
+    const pathCount = (svg.match(/<path/g) ?? []).length;
 
+    if (pathCount === 0) {
+      // 空结果配恢复阶梯：比返回一段空 SVG 更能阻止调用方退回目测猜形状
+      if (args.output) {
+        const outPath = expandPath(args.output);
+        await writeOutput(outPath, svg);
+        return `已保存到 ${outPath}，但 ${TRACE_EMPTY_RECOVERY}`;
+      }
+      return TRACE_EMPTY_RECOVERY;
+    }
+
+    const scaleNote =
+      traceScale > 1
+        ? `，已自动放大 ${traceScale}× 描摹，SVG width/height 已设回原图尺寸（viewBox 为放大坐标）`
+        : "";
     if (args.output) {
       const outPath = expandPath(args.output);
       await writeOutput(outPath, svg);
-      return `已矢量化并保存到 ${outPath}（${image.width}×${image.height}，SVG ${svg.length} 字符）`;
+      return `已矢量化并保存到 ${outPath}（${origW}×${origH}，SVG ${svg.length} 字符${scaleNote}）`;
     }
-    return svg;
+    return traceScale > 1 ? `（${scaleNote.slice(1)}）\n${svg}` : svg;
   },
 };
 
@@ -182,7 +251,7 @@ export const EXTRACT_FG_TOOL: LocalToolEntry<ExtractFgArgs> = {
     const data = image.bitmap.data;
     const bg = args.background
       ? hexToRgb(args.background)
-      : sampleBackground(data, w, h);
+      : sampleBackgroundCorners(data, w, h);
 
     let fgPixels = 0;
     const total = w * h;
@@ -208,29 +277,3 @@ export const EXTRACT_FG_TOOL: LocalToolEntry<ExtractFgArgs> = {
     return result;
   },
 };
-
-/**
- * 采样图片四角与边缘中点，取出现最多的颜色作为背景估计。
- *
- * 走 createColorClusters：量化值只作分桶键，返回的是**簇内真实均值**。
- * 直接返回量化值会带来最多 7/通道的偏差 —— 实测背景 #FEFEFE 被量化成
- * #F8F8F8 后色差为 7，threshold=4 的精确抠图会把整张背景判成前景
- *（1600/1600 像素皆前景，等于原图原样输出）。
- */
-function sampleBackground(data: Buffer, w: number, h: number): Rgb {
-  const pts: ReadonlyArray<readonly [number, number]> = [
-    [0, 0],
-    [w - 1, 0],
-    [0, h - 1],
-    [w - 1, h - 1],
-    [Math.floor(w / 2), 0],
-    [0, Math.floor(h / 2)],
-  ];
-  const clusters = createColorClusters();
-  for (const [x, y] of pts) {
-    const idx = (y * w + x) * 4;
-    clusters.add(data[idx], data[idx + 1], data[idx + 2]);
-  }
-  // 采样点恒 ≥ 1，result() 必非空
-  return clusters.result()[0].rgb;
-}

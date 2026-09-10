@@ -1,6 +1,6 @@
 ---
 name: j-can-see
-description: Vision methodology and file-output conventions for the j-can-see MCP server. TRIGGER GATE — on models WITH native vision input, invoke this skill only when the user explicitly asks for j-can-see, or when native vision has actually failed on the task (cannot open/read an image, unusable output). Otherwise read images natively and skip this skill. Primary audience is models WITHOUT multimodal input. Covers vision-model tools (see_image for describing, locate/inspect for grounding coordinates, ocr_long for chunked OCR), local pixel tools exempt from the gate (crop, image_diff, colors, trace, extract_fg), and the .j-can-see/ output-file convention.
+description: Vision methodology and file-output conventions for the j-can-see MCP server. TRIGGER GATE — on models WITH native vision input, invoke this skill only when the user explicitly asks for j-can-see, or when native vision has actually failed on the task (cannot open/read an image, unusable output). Otherwise read images natively and skip this skill. Primary audience is models WITHOUT multimodal input. Covers vision-model tools (see_image for describing, locate/inspect for grounding coordinates, ocr_long for chunked OCR), local pixel tools exempt from the gate (crop, image_diff, colors, trace, extract_fg — including chart/data-viz series color extraction and background-excluded palettes), and the .j-can-see/ output-file convention.
 ---
 
 # j-can-see 视觉工具使用指南
@@ -40,6 +40,8 @@ description: Vision methodology and file-output conventions for the j-can-see MC
 | 把这块裁出来存成文件 | `crop` |
 | 这两张图哪里不同？ | `image_diff` |
 | 这里到底是什么颜色？ | `colors` |
+| 深背景图里内容/图表的实际色？ | `colors`（`exclude_background: true`，或看自动附带的背景排除视图） |
+| 图表/数据可视化的系列色？（柱状图每根柱、折线颜色） | `colors` 窄条 `profile:"y"` 探测 + 单系列 `region` 取值（见 playbook 7） |
 | 上下/左右颜色是否一致？渐变哪里断了？ | `colors`（`profile` / 双 `region` 对比） |
 | 这个图形的矢量形状？ | `trace` |
 | 把这个图标抠成透明 PNG | `extract_fg` |
@@ -55,9 +57,12 @@ description: Vision methodology and file-output conventions for the j-can-see MC
 
 这些工具本身也有边界，用之前先知道：
 
-- `colors` 按 5 位量化分桶聚类，**适合 UI 纯色**；渐变或照片的主色会被打散成
-  多个小簇，占比数字只能参考。要精确取某处的色，先用 `region` 把范围缩到那一块；
-  **比较两处颜色**就并行发两次 `colors`（各带一个 `region`）比主色 hex；
+- `colors` 按 5 位量化分桶聚类 + **近邻簇后合并**（Δ≤8）：UI 纯色精确，
+  渐变会收敛为少量「渐变簇」（起止色见 profile），占比恢复参考价值。
+  要精确取某处的色，先用 `region` 把范围缩到那一块；
+  **深色仪表盘/大背景图**会淹没主色榜 —— top1 占比 >60% 时输出自动附
+  「背景排除视图」（四角采样推测背景），也可直接传 `exclude_background: true`
+  以排除视图为主；**比较两处颜色**就并行发两次 `colors`（各带一个 `region`）比主色 hex；
   **要看颜色的空间结构**（渐变段 / 接缝 / 断层在哪）用 `profile: "y" | "x"`，
   它返回均匀段（纯色/渐变）与跳变点的位置和两侧色值。
 - `image_diff` 返回的是 12×12 网格里差异密度最高的**格子**，不是精确包围盒 ——
@@ -81,6 +86,10 @@ inspect（扫整体布局，拿到所有元素的坐标）
 坐标在工具间是通用的（原图像素）：`locate`/`inspect` 返回的 `x1,y1,x2,y2`
 直接作为 `see_image`/`crop` 的 `region` 参数传入即可。
 
+`locate`/`inspect` 自身也接受 `region`（先裁剪再定位/盘点，输出仍换算回整图坐标）——
+长图上的小目标、密集屏幕的分区盘点、locate 失败后的「缩小范围重试」都走这条路，
+不必先 crop 存文件。
+
 ## 场景 playbook
 
 ### 1. UI 设计稿还原
@@ -100,12 +109,14 @@ inspect（扫整体布局，拿到所有元素的坐标）
 ### 3. 长截图 / 长聊天记录 OCR
 
 - **不要**用 `see_image` 一次性 OCR 超长图（服务端降采样会丢字）
-- 直接用 `ocr_long`：自动分块 + 重叠区防丢字 + 合并去重
+- 直接用 `ocr_long`：自动优先在低内容带（空白/稀疏行）切口 —— 安全切口
+  两侧无重叠、无去重负担；密集内容找不到安全切口才退回重叠区兜底防丢字
 - 它会保留发言人 / 时间戳 / 引用结构
 - 图太高（超过 16 块）会直接报错并要求先用 `crop` 纵向切段——照做，别硬试
 
-**必须读边界审计**。`ocr_long` 会逐条报告每个分块边界的处理结果，两种都要当回事：
+**必须读边界审计**。`ocr_long` 会逐条报告每个分块边界的处理结果，三种都要当回事：
 
+- `安全切口（低内容带，无重叠，未做去重）` —— 切在空白带上，无风险
 - `⚠️ 未能识别重叠内容` —— 该处**可能有重复文字**。通常是那一行正好被切断、
   两侧转录不一致所致。用 `see_image` + `region` 复核它给出的 y 区间，
   再决定要不要手工删重复。
@@ -160,6 +171,26 @@ inspect（扫整体布局，拿到所有元素的坐标）
    新信息（放大本身也不增加信息，见上）——直接落本地像素手段（`colors` 的
    region/profile）。
 
+### 7. 图表 / 数据可视化取色（柱状图系列色、折线颜色、对标截图改代码配色）
+
+「把代码里的图表颜色改成和截图一致」这类任务的正确路径是**全程本地像素工具**，
+一次视觉调用都不需要（视觉只能给「蓝色渐变」这种定性描述，给不了 hex）：
+
+1. **候选色先从代码拿**：图例/主题配置里通常已有现成色值（如 `#4da3ff`、`#6fe2ff`），
+   直接作为 `colors` 的 `candidates` 逐像素验证，比从图上反推再对代码快得多。
+2. **探测系列色位置**：对穿过图表主体的**窄条**（20-40px 宽）做
+   `colors` + `profile: "y"` —— 返回的渐变段就是各个系列色的垂直分布
+   （堆叠柱各段的起止 hex 与边界 y 坐标一次拿全）。
+   **方向规则：扫描方向必须垂直于颜色变化方向**——柱色纵向渐变就沿 y 扫；
+   横向渐变（条形图）用 `profile: "x"`。方向错了每条线都是杂线，输出为空段。
+3. **深背景先排除**：仪表盘深底会淹没主色榜 —— `exclude_background: true`
+   （或看输出自动附的背景排除视图）。
+4. **单系列精确取值**：用第 2 步拿到的 x/y 坐标圈出单根柱子的 `region`，
+   `colors` + `region` + `profile: "y"` 取该柱渐变的起止 hex；写进代码的就是这两个值
+   （顶/底色）而不是单一 hex。
+5. **验证**：改完代码截图，与参考图 `image_diff`；差异集中在柱区属正常
+   （渲染器渐变插值不同），色值本身以第 4 步像素值为准。
+
 ## 速度与容错（上游慢 / 限流 / 不稳定时）
 
 视觉调用统一经过服务端全局并发池（自动降档、自动退避重试、超时自动降质），
@@ -190,8 +221,8 @@ inspect（扫整体布局，拿到所有元素的坐标）
   - **交付物**（要保留的素材、logo、SVG）→ 显式写到项目正式位置（如 `assets/`）
   - 输出目录不存在会自动创建；相对路径相对 server 工作目录（通常是项目根），不确定时用绝对路径
 - **超长图先分段再 OCR**：高于约两屏（≈3000px）的图，`ocr_long` 受总时间预算（默认 85s）约束，预算耗尽只返回已完成部分。拿到"未处理块 y 区间"提示时，用 `crop` 逐段裁出后单独 `ocr_long` 补齐——单块调用能在客户端超时内完成
-- **locate/inspect 依赖模型定位能力（grounding）**：模型定位弱时 locate 可能频繁 NOT_FOUND（返回文案会附建议）。长图上定位先 `crop` 局部化；仍找不到改用 `inspect` 枚举全部元素
-- **locate 找的是「元素」，不是「背景」**：大块纯色背景区域不是 grounding 模型认得的对象（实测对「蓝色背景区域」这类 target 直接 NOT_FOUND）。要定位背景区块，用 `colors`（`profile` / `region`）做像素级探测，或用 `inspect` 找到的邻近元素坐标反推
+- **locate/inspect 依赖模型定位能力（grounding）**：模型定位弱时 locate 可能频繁 NOT_FOUND（返回文案会附建议）。长图上定位先 `crop` 局部化或直接用 `region` 参数；仍找不到改用 `inspect` 枚举全部元素
+- **locate 找的是「元素」，不是「背景」也不是「图表系列」**：大块纯色背景、柱状图的柱子/折线/系列色块都不是 grounding 模型认得的对象（实测直接 NOT_FOUND）。取色/定位色块改用 `colors`（`region` / `profile` / `exclude_background`）做像素级探测，或用 `inspect` 找到的邻近元素反推
 - **细节缺失时自己看**：如果只有文字描述但文件路径可用，用 `see_image`/`locate` 自己看，别猜
 - **看图提问规范**：描述类问题用开放式提问（"Describe the center region"），不要
   引导式提问（"Are there ring lines?" 会诱导模型确认"有"）。模型输出里出现「大概/

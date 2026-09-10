@@ -33,6 +33,36 @@ describe("LOCATE_TOOL", () => {
     expect(text).toContain("x1: 100, y1: 200, x2: 150, y2: 230");
   });
 
+  it("region 参数：裁剪后定位，坐标加偏移映射回整图（0.8.0 新增）", async () => {
+    // 200×100 图，region 右半 (100,0)-(200,100)：裁剪图 100×100（scale=1），
+    // 模型在裁剪图上返回 10,20,30,40 → 整图坐标 +offset = 110,20,130,40
+    const text = await runVision(
+      LOCATE_TOOL,
+      { source: "x.png", target: "按钮", region: "100,0,200,100" },
+      {
+        reader: readerOf(await makePng(200, 100)),
+        fetchImpl: mockFetch("x1: 10, y1: 20, x2: 30, y2: 40"),
+      },
+    );
+    expect(text).toContain("x1: 110, y1: 20, x2: 130, y2: 40");
+  });
+
+  it("多匹配输出带方位标签（0.8.0 新增）", async () => {
+    const text = await runVision(
+      LOCATE_TOOL,
+      { source: "x.png", target: "按钮" },
+      {
+        reader: readerOf(await png80()),
+        fetchImpl: mockFetch(
+          "x1: 0, y1: 0, x2: 10, y2: 10\nx1: 90, y1: 70, x2: 100, y2: 80",
+        ),
+      },
+    );
+    expect(text).toContain("2 个");
+    expect(text).toContain("[top-left]");
+    expect(text).toContain("[bottom-right]");
+  });
+
   it("NOT_FOUND 返回未找到，并附可操作建议（crop 分段 / inspect 枚举 / 背景区块改用 colors）", async () => {
     const text = await runVision(
       LOCATE_TOOL,

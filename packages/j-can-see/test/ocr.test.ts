@@ -3,7 +3,7 @@ import { imageSize } from "image-size";
 import {
   OCR_LONG_TOOL,
   mergeTwo,
-  planChunks,
+  planChunksAdaptive,
   buildAudit,
   ocrWithBudget,
   assembleChunks,
@@ -16,6 +16,44 @@ import {
   mockFetch,
   TEST_CONFIG,
 } from "./helpers.js";
+
+/** 合成位图：content(y) 为 true 的行是深色（高能量），false 是白色空白带 */
+function stripeData(
+  w: number,
+  h: number,
+  content: (y: number) => boolean,
+): Buffer {
+  const buf = Buffer.alloc(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    const dark = content(y);
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4;
+      buf[o] = dark ? 20 : 255;
+      buf[o + 1] = dark ? 20 : 255;
+      buf[o + 2] = dark ? 20 : 255;
+      buf[o + 3] = 255;
+    }
+  }
+  return buf;
+}
+
+/** 文本样行：严格明暗交替 → 每对相邻行都高能量（真实文本的低能量行来自
+ *  行间隙；测试里低能量行只由空白带提供，可控且确定） */
+const textRows = (y: number) => y % 2 === 0;
+
+/** 把合成位图编码成 PNG（供工具级测试当 source 用） */
+async function stripedPng(
+  w: number,
+  h: number,
+  content: (y: number) => boolean,
+): Promise<Buffer> {
+  const { Jimp } = await import("jimp");
+  return Jimp.fromBitmap({
+    data: stripeData(w, h, content),
+    width: w,
+    height: h,
+  }).getBuffer("image/png");
+}
 
 describe("mergeTwo", () => {
   it("尾部与头部完全一致时去重，并报告删除的行", () => {
@@ -45,63 +83,136 @@ describe("mergeTwo", () => {
   });
 });
 
-describe("planChunks", () => {
+describe("planChunksAdaptive（内容感知分块）", () => {
+  const W = 64;
+  const CHUNK_H = 1568;
+  const OVERLAP = 188;
+
   it("短图不分块", () => {
-    expect(planChunks(800, 1568, 188)).toEqual([{ y: 0, yEnd: 800 }]);
+    const chunks = planChunksAdaptive(
+      stripeData(W, 800, textRows),
+      W,
+      800,
+      CHUNK_H,
+      OVERLAP,
+    );
+    expect(chunks).toEqual([{ y: 0, yEnd: 800 }]);
   });
 
-  it("长图按 step = 块高 - 重叠 切分，末块贴底", () => {
-    const chunks = planChunks(3136, 1568, 188);
-    expect(chunks).toHaveLength(3);
-    expect(chunks[0]).toEqual({ y: 0, yEnd: 1568 });
-    expect(chunks[1].y).toBe(1380); // 1568 - 188
-    expect(chunks[chunks.length - 1].yEnd).toBe(3136);
+  it("低内容带（空白行）处安全切口：两侧无重叠", () => {
+    // y 1540-1600 是空白带（含期望切口 1568）→ 切口应落在带内且无重叠
+    const h = 3136;
+    const data = stripeData(W, h, (y) => (y >= 1540 && y <= 1600 ? false : textRows(y)));
+    const chunks = planChunksAdaptive(data, W, h, CHUNK_H, OVERLAP);
+    expect(chunks.length).toBeGreaterThanOrEqual(2);
+    expect(chunks[0].yEnd).toBeGreaterThanOrEqual(1540);
+    expect(chunks[0].yEnd).toBeLessThanOrEqual(1600);
+    // 安全切口：下一块起点 == 上一块终点（无重叠、无去重负担）
+    expect(chunks[1].y).toBe(chunks[0].yEnd);
+    expect(chunks[chunks.length - 1].yEnd).toBe(h);
   });
 
-  it("相邻块确实重叠（重叠区是刻意制造的）", () => {
-    const chunks = planChunks(5000, 1568, 188);
+  it("密集内容找不到安全切口：退回等高 + 重叠兜底（与旧版一致）", () => {
+    // 空白带占底部 ~30%（y 2200 起）：p30 被拉到近 0；切口窗口 [1474,1662]
+    // 内全是文本行 → min 能量仍高于阈值 → 兜底重叠
+    const h = 3136;
+    const data = stripeData(W, h, (y) => (y >= 2200 ? false : textRows(y)));
+    const chunks = planChunksAdaptive(data, W, h, CHUNK_H, OVERLAP);
+    expect(chunks.length).toBeGreaterThanOrEqual(2);
+    // 兜底边界：相邻块确实重叠（重叠区是刻意制造的）
     for (let i = 1; i < chunks.length; i++) {
       expect(chunks[i].y).toBeLessThan(chunks[i - 1].yEnd);
     }
+    expect(chunks[0].yEnd).toBe(CHUNK_H);
+  });
+
+  it("尾部剩余略多于一块时合并收尾，不切出零头小块", () => {
+    // 兜底路径下 3136 高：{0,1568} + y=1380，剩余 1756 ≤ 1.2×1568 → 一块收尾
+    const h = 3136;
+    const data = stripeData(W, h, (y) => (y >= 2200 ? false : textRows(y)));
+    const chunks = planChunksAdaptive(data, W, h, CHUNK_H, OVERLAP);
+    expect(chunks).toHaveLength(2);
+    expect(chunks[1]).toEqual({ y: CHUNK_H - OVERLAP, yEnd: h });
   });
 });
 
 describe("buildAudit", () => {
-  const overlap = 188;
-
   it("去重成功的边界：列出删除的行 + 误删风险提示", () => {
-    const out = buildAudit(
-      [{ index: 1, removed: ["BBB"], overlapFrom: 1380, overlapTo: 1568 }],
-      overlap,
-    );
+    const out = buildAudit([
+      {
+        index: 1,
+        removed: ["BBB"],
+        overlapFrom: 1380,
+        overlapTo: 1568,
+        overlapPx: 188,
+      },
+    ]);
     expect(out).toContain("块1→块2");
+    expect(out).toContain("重叠 188px");
     expect(out).toContain("「BBB」");
     expect(out).toContain("y 1380–1568");
     expect(out).toContain("误删");
   });
 
   it("去重失败的边界必须明确警告，且给出可复核坐标", () => {
-    const out = buildAudit(
-      [{ index: 1, removed: null, overlapFrom: 1380, overlapTo: 1568 }],
-      overlap,
-    );
+    const out = buildAudit([
+      {
+        index: 1,
+        removed: null,
+        overlapFrom: 1380,
+        overlapTo: 1568,
+        overlapPx: 188,
+      },
+    ]);
     expect(out).toContain("未能识别重叠内容");
     expect(out).toContain("可能残留重复文字");
     expect(out).toContain("y 1380–1568");
     expect(out).toContain("region");
   });
 
-  it("混合场景：成功与失败的边界各自如实呈现", () => {
-    const out = buildAudit(
-      [
-        { index: 1, removed: null, overlapFrom: 1380, overlapTo: 1568 },
-        { index: 2, removed: ["CCC"], overlapFrom: 2760, overlapTo: 2948 },
-      ],
-      overlap,
-    );
+  it("安全切口边界：标注无重叠未去重，不冒充风险也不冒充成功去重", () => {
+    const out = buildAudit([
+      {
+        index: 1,
+        removed: null,
+        overlapFrom: 1474,
+        overlapTo: 1474,
+        overlapPx: 0,
+      },
+    ]);
+    expect(out).toContain("安全切口");
+    expect(out).toContain("未做去重");
+    expect(out).not.toContain("未能识别重叠内容");
+    expect(out).not.toContain("误删");
+  });
+
+  it("混合场景：安全切口/去重成功/去重失败各自如实呈现", () => {
+    const out = buildAudit([
+      {
+        index: 1,
+        removed: null,
+        overlapFrom: 1474,
+        overlapTo: 1474,
+        overlapPx: 0,
+      },
+      {
+        index: 2,
+        removed: null,
+        overlapFrom: 1380,
+        overlapTo: 1568,
+        overlapPx: 188,
+      },
+      {
+        index: 3,
+        removed: ["CCC"],
+        overlapFrom: 2760,
+        overlapTo: 2948,
+        overlapPx: 188,
+      },
+    ]);
     expect(out).toContain("块1→块2");
+    expect(out).toContain("安全切口");
     expect(out).toContain("未能识别重叠内容");
-    expect(out).toContain("块2→块3");
     expect(out).toContain("「CCC」");
     // 两个方向的风险都要披露
     expect(out).toContain("可能残留重复文字");
@@ -109,7 +220,7 @@ describe("buildAudit", () => {
   });
 
   it("无边界（短图单块）时不产生审计段落", () => {
-    expect(buildAudit([], overlap)).toBe("");
+    expect(buildAudit([])).toBe("");
   });
 });
 
@@ -126,8 +237,8 @@ describe("OCR_LONG_TOOL", () => {
     expect(f.count()).toBe(1);
   });
 
-  it("长图分块并发 OCR：块数正确，合并去重，附边界审计", async () => {
-    // 高 3136 > maxEdge 1568 → 3 块。各块返回相同内容 → 断言与完成顺序无关
+  it("长图分块并发 OCR（纯色图 → 安全切口，无重叠无去重）", async () => {
+    // 高 3136 白图：每行能量相同 → 全部切口判安全 → 2 块、边界无重叠
     const png = await makePng(100, 3136, 0xffffffff);
     const f = mockFetch("AAA\nBBB");
     const text = await runVision(
@@ -135,14 +246,33 @@ describe("OCR_LONG_TOOL", () => {
       { source: "x.png" },
       { reader: readerOf(png), fetchImpl: f },
     );
-    expect(f.count()).toBe(3);
-    expect(text).toContain("分 3 块");
-    expect(text).toContain("2 条边界");
-    // 三块内容相同 → 两条边界都应去重，正文只留一份
-    expect(text).toContain("均已去重");
-    expect(text).not.toContain("AAA\nBBB\nAAA");
-    expect(text).toContain("边界审计");
+    expect(f.count()).toBe(2);
+    expect(text).toContain("分 2 块");
+    expect(text).toContain("1 条边界");
+    expect(text).toContain("1 安全切口");
+    expect(text).toContain("安全切口（低内容带，无重叠，未做去重）");
+    // 两块内容相同且无重叠 → 原样保留两份（安全切口不去重是刻意的：
+    // 无重叠时"重复"只可能是原文连续重复，删了才是误删）
+    expect(text).toContain("AAA\nBBB\nAAA");
     // 契约：全部完成时正文不得出现任何缺口标记（曾有 prev=-2 初值导致首行假标记）
+    expect(text).not.toContain("内容缺失");
+  });
+
+  it("长图分块并发 OCR（密集图 → 重叠兜底 + 去重 + 审计）", async () => {
+    // 底部 ~30% 空白拉低 p30 → 切口窗口内无安全带 → 兜底重叠；
+    // 两块内容相同 → 去重后只留一份
+    const png = await stripedPng(100, 3136, (y) => (y >= 2200 ? false : textRows(y)));
+    const f = mockFetch("AAA\nBBB");
+    const text = await runVision(
+      OCR_LONG_TOOL,
+      { source: "x.png" },
+      { reader: readerOf(png), fetchImpl: f },
+    );
+    expect(f.count()).toBe(2);
+    expect(text).toContain("分 2 块");
+    expect(text).toContain("重叠 188px");
+    expect(text).toContain("去除重复");
+    expect(text).not.toContain("AAA\nBBB\nAAA");
     expect(text).not.toContain("内容缺失");
   });
 
@@ -172,8 +302,8 @@ describe("OCR_LONG_TOOL", () => {
   }, 30_000);
 
   it("块数超过上限时在发起 OCR 之前 fail fast", async () => {
-    // 23000px 高 → 17 块 > 上限 16
-    const png = await makePng(50, 23000, 0xffffffff);
+    // 25000px 高（纯色安全切口每块进 1474px）→ 17 块 > 上限 16
+    const png = await makePng(50, 25000, 0xffffffff);
     const f = mockFetch("不该被调用");
     await expect(
       runVision(
@@ -204,7 +334,7 @@ describe("OCR_LONG_TOOL", () => {
     );
     expect(f.count()).toBe(0);
     expect(text).toContain("没有任何块完成");
-    expect(text).toContain("第 1 块（y 0–1568）");
+    expect(text).toContain("第 1 块（y 0–1474）"); // 纯色图安全切口：第一块到 1474
     expect(text).toContain("crop");
   });
 

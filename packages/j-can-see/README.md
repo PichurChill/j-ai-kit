@@ -130,9 +130,9 @@ claude mcp add j-can-see -s user \
 | Tool | Purpose |
 |---|---|
 | `see_image` | Describe or compare images, zoom into regions |
-| `locate` | Find one target and return its pixel coordinates |
-| `inspect` | Enumerate all elements of one type with text and coordinates |
-| `ocr_long` | OCR tall screenshots in chunks, merged with a dedup audit |
+| `locate` | Locate one target, return pixel box + position label; optional `region` narrows the search (small targets on tall images) |
+| `inspect` | Inventory elements of a kind: index, text, position, box; optional `region` for dense screens |
+| `ocr_long` | Chunked OCR for tall screenshots: cuts at low-content bands first (no overlap, no dedup burden), falls back to overlap for dense content, per-boundary audit |
 
 ### Local tools (no vision config needed)
 
@@ -140,7 +140,7 @@ claude mcp add j-can-see -s user \
 |---|---|
 | `crop` | Crop a region to a file |
 | `image_diff` | Pixel diff percentage and densest changed grid cells |
-| `colors` | Exact dominant or candidate colors |
+| `colors` | Exact palette, gradient profile scans, and per-pixel candidate scoring; auto background-excluded view on background-dominated images (`exclude_background: true` to make it primary), narrow-strip profiles for chart series colors |
 | `trace` | Vectorize flat high-contrast graphics to SVG |
 | `extract_fg` | Cut a foreground icon into a transparent PNG |
 

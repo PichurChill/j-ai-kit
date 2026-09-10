@@ -69,3 +69,18 @@ export function clampBox(box: Box, width: number, height: number): Box {
 export function formatBox(b: Box): string {
   return `x1: ${b.x1}, y1: ${b.y1}, x2: ${b.x2}, y2: ${b.y2}`;
 }
+
+/**
+ * 框中心在图中的九宫格方位（top-left / top / … / bottom-right）。
+ * 多匹配/多元素输出附带方位，调用方模型不用先解析坐标才能挑目标。
+ */
+export function positionLabel(b: Box, width: number, height: number): string {
+  const x = (b.x1 + b.x2) / 2;
+  const y = (b.y1 + b.y2) / 2;
+  const h = x < width / 3 ? "left" : x > (width * 2) / 3 ? "right" : "center";
+  const v = y < height / 3 ? "top" : y > (height * 2) / 3 ? "bottom" : "center";
+  // 中轴上的框只报单轴：top / left / center（与 avt 的九宫格语义一致）
+  return [v === "center" ? null : v, h === "center" ? null : h]
+    .filter(Boolean)
+    .join("-") || "center";
+}

@@ -64,6 +64,23 @@ describe("TRACE_TOOL", () => {
     );
     expect(svgHalf.length).toBeGreaterThan(svgSolid.length);
   });
+
+  it("小图自动放大后出形，SVG 尺寸写回原图（0.9.0 新增）", async () => {
+    // 30px 图标（黑方块）在 1x 会被 speckle 过滤打成空；放大后应出路径，
+    // 且 SVG width/height 写回原图尺寸（image-tracer 输出无这两个属性，需插入）
+    const img = new Jimp({ width: 30, height: 30, color: 0xffffffff });
+    img.composite(new Jimp({ width: 14, height: 14, color: 0x000000ff }), 8, 8);
+    const png = await img.getBuffer("image/png");
+    const out = await runLocal(
+      TRACE_TOOL,
+      { source: "x.png", colors: 2 },
+      { reader: readerFrom({ "x.png": png }) },
+    );
+    expect((out.match(/<path/g) ?? []).length).toBeGreaterThan(0);
+    expect(out).toContain('width="30"');
+    expect(out).toContain('height="30"');
+    expect(out).toContain("自动放大");
+  });
 });
 
 describe("EXTRACT_FG_TOOL", () => {

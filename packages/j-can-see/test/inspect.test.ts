@@ -15,8 +15,8 @@ describe("INSPECT_TOOL", () => {
       { source: "x.png", kind: "buttons" },
       { reader: readerOf(await png80()), fetchImpl: f },
     );
-    expect(text).toContain("1. 发送按钮 x1: 10, y1: 20, x2: 30, y2: 40");
-    expect(text).toContain("2. (no text) x1: 50, y1: 60, x2: 70, y2: 80");
+    expect(text).toContain("1. 发送按钮 [left] x1: 10, y1: 20, x2: 30, y2: 40");
+    expect(text).toContain("2. (no text) [bottom] x1: 50, y1: 60, x2: 70, y2: 80");
 
     // prompt 含 kind
     const body = JSON.parse(f.calls[0][1].body as string);
@@ -81,7 +81,7 @@ describe("INSPECT_TOOL", () => {
         fetchImpl: mockFetch("- 1. 发送按钮 x1: 10, y1: 20, x2: 30, y2: 40"),
       },
     );
-    expect(text).toContain("1. 发送按钮 x1: 10, y1: 20, x2: 30, y2: 40");
+    expect(text).toContain("1. 发送按钮 [left] x1: 10, y1: 20, x2: 30, y2: 40");
     expect(text).not.toContain("- 1.");
   });
 

@@ -242,3 +242,47 @@ export async function cropAndProcess(
   image.crop({ x: box.x, y: box.y, w: box.w, h: box.h });
   return encodeProcessed(image, limits.maxEdge);
 }
+
+/** cropRegionAndProcessWithScale 的结果：模型坐标换算回整图所需的全套元数据 */
+export interface CroppedImageWithScale extends ProcessedImageWithScale {
+  /** 裁剪框在整图中的左上角（原图像素）—— 裁剪图坐标 + offset = 整图坐标 */
+  readonly offsetX: number;
+  readonly offsetY: number;
+  /** 整图尺寸：offset 加回后 clamp 用（originalWidth/Height 是裁剪框尺寸） */
+  readonly fullWidth: number;
+  readonly fullHeight: number;
+}
+
+/**
+ * 裁剪 + 等比缩放 + 偏移元数据：locate/inspect 的 region 参数专用。
+ *
+ * 模型在「裁剪图的缩放图」上返回坐标，换算链是：
+ *   整图坐标 = 模型坐标 / scale + offset
+ * 与 processImageWithScale 同构（scale = 缩放后宽 / 裁剪框宽），
+ * 额外携带 offset 与整图尺寸，保证输出坐标仍能直接回喂 region。
+ */
+export async function cropRegionAndProcessWithScale(
+  raw: Buffer,
+  region: string,
+  limits: ImageLimits,
+): Promise<CroppedImageWithScale> {
+  const image = await decodeJimp(raw, limits);
+  const fullWidth = image.width;
+  const fullHeight = image.height;
+  const box = resolveRegion(region, fullWidth, fullHeight);
+  image.crop({ x: box.x, y: box.y, w: box.w, h: box.h });
+  const croppedWidth = image.width;
+  const croppedHeight = image.height;
+
+  const processed = await encodeProcessed(image, limits.maxEdge);
+  return {
+    ...processed,
+    scale: image.width / croppedWidth,
+    originalWidth: croppedWidth,
+    originalHeight: croppedHeight,
+    offsetX: box.x,
+    offsetY: box.y,
+    fullWidth,
+    fullHeight,
+  };
+}

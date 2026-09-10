@@ -5,6 +5,7 @@ import {
   parseRegion,
   resolveRegion,
   cropAndProcess,
+  cropRegionAndProcessWithScale,
   type ImageLimits,
 } from "../src/image.js";
 import { Jimp } from "jimp";
@@ -150,5 +151,21 @@ describe("cropAndProcess", () => {
     const img = await Jimp.read(Buffer.from(out.base64, "base64"));
     expect(img.width).toBe(20);
     expect(img.height).toBe(10);
+  });
+});
+
+describe("cropRegionAndProcessWithScale", () => {
+  it("返回偏移与整图元数据：裁剪图坐标 + offset = 整图坐标（0.8.0 新增）", async () => {
+    const out = await cropRegionAndProcessWithScale(
+      await makePng(200, 100),
+      "100,0,200,100",
+      LIMITS,
+    );
+    expect(out.offsetX).toBe(100);
+    expect(out.offsetY).toBe(0);
+    expect(out.fullWidth).toBe(200);
+    expect(out.fullHeight).toBe(100);
+    expect(out.originalWidth).toBe(100); // 裁剪框尺寸
+    expect(out.scale).toBe(1); // 未超 maxEdge 不缩放
   });
 });

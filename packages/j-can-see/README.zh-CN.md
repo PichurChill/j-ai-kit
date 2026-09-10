@@ -130,9 +130,9 @@ claude mcp add j-can-see -s user \
 | 工具 | 用途 |
 |---|---|
 | `see_image` | 描述或对比图片，支持局部放大 |
-| `locate` | 定位单个目标并返回像素坐标 |
-| `inspect` | 枚举同类元素，返回编号、文字和坐标 |
-| `ocr_long` | 超长截图分块 OCR，合并并做去重审计 |
+| `locate` | 定位单个目标并返回像素坐标与方位；支持 `region` 缩小搜索范围（长图小目标自救） |
+| `inspect` | 枚举同类元素，返回编号、文字、方位和坐标；支持 `region` 分区盘点 |
+| `ocr_long` | 超长截图分块 OCR：优先在低内容带切口（无重叠无去重负担），密集内容退回重叠兜底，逐边界审计 |
 
 ### 本地工具（无需视觉配置）
 
@@ -140,7 +140,7 @@ claude mcp add j-can-see -s user \
 |---|---|
 | `crop` | 把区域裁成文件 |
 | `image_diff` | 像素差异比例和差异最密集的网格块 |
-| `colors` | 精确主色或候选色 |
+| `colors` | 精确主色、渐变剖面（profile）与候选色逐像素评分；深背景自动附背景排除视图（或 `exclude_background: true`），图表系列色走窄条 profile 探测 |
 | `trace` | 把扁平高对比图形矢量化成 SVG |
 | `extract_fg` | 把前景图标抠成透明 PNG |
 

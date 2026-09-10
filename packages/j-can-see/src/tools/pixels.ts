@@ -13,6 +13,8 @@ import { readSource } from "../sources/index.js";
 import { expandPath } from "../sources/file.js";
 import {
   createColorClusters,
+  mergeClusters,
+  sampleBackgroundCorners,
   hexToRgb,
   rgbToHex,
   linearColorDiff,
@@ -68,7 +70,9 @@ export const CROP_TOOL: LocalToolEntry<CropArgs> = {
         scale: {
           type: "number",
           description:
-            "缩放倍数（BICUBIC）：>1 放大（如 4 = 放大 4 倍，便于看清小图标），<1 缩小（如 0.5 = 缩小一半，可用于把图对齐到目标尺寸）",
+            "缩放倍数（BICUBIC）：≤2-3 倍用于看清结构（放大不增加信息，超倍会出现插值伪影，" +
+            "模型可能在数伪影而不是原图内容）；要精确颜色/纹理不要放大 —— 用 colors + region 在原图上取，" +
+            "色值不经过压缩编码影响。>1 放大（如 2 = 2 倍），<1 缩小（如 0.5，可用于把图对齐到目标尺寸）",
         },
       },
       required: ["source", "region"],
@@ -275,6 +279,7 @@ export const colorsSchema = z.object({
   top: z.number().int().positive().max(32).optional(),
   candidates: z.array(z.string()).min(1).optional(),
   profile: z.enum(["x", "y"]).optional(),
+  exclude_background: z.boolean().optional(),
 });
 export type ColorsArgs = z.infer<typeof colorsSchema>;
 
@@ -287,6 +292,15 @@ const PROFILE_MAX_JUMPS = 16;
 
 /** 段起点终点各通道差均 ≤ 此值时判定为纯色（否则按渐变报告 Δ） */
 const FLAT_SEGMENT_DIFF = 2;
+
+/** 背景排除：与四角采样背景色的最大通道差 ≤ 此值的像素视为背景 */
+const BG_EXCLUDE_DIFF = 24;
+
+/** 主色占比超过此值视为「背景统治」形态，自动追加背景排除视图 */
+const BG_DOMINANT_TRIGGER_PCT = 60;
+
+/** 候选色逐像素评分的容差：色差 ≤ 此值计入覆盖，越近权重越高 */
+const CANDIDATE_TOL = 16;
 
 function formatRgbDelta(a: Rgb, b: Rgb): string {
   const parts: string[] = [];
@@ -348,15 +362,79 @@ function formatProfile(
   return out;
 }
 
+/** 单个候选色的逐像素评分结果 */
+interface CandidateScore {
+  readonly hex: string;
+  readonly rgb: Rgb;
+  /** 区域内与该候选色差 ≤ CANDIDATE_TOL 的像素占比 */
+  readonly sharePct: number;
+  /** 平均色差（0-255，越低越近） */
+  readonly meanDist: number;
+  /** 加权分：Σ max(0, tol - diff) —— 精确落色优先于近邻 */
+  readonly weighted: number;
+}
+
+/**
+ * 候选色逐像素评分：每个候选对区域内全部不透明像素计算线性色差，
+ * 覆盖率 + 加权软匹配（avt dominant_colors 同源算法）。
+ * 旧实现只与 top1 主色比 —— 背景占多数时会把背景当答案；逐像素评分
+ * 让「覆盖了多少真实像素」说话，背景淹没场景下才选得出正确的候选。
+ */
+function scoreCandidates(
+  data: Uint8Array | Buffer,
+  total: number,
+  candidates: readonly string[],
+): CandidateScore[] {
+  return candidates.map((hex) => {
+    const rgb = hexToRgb(hex);
+    let hard = 0;
+    let distSum = 0;
+    let weighted = 0;
+    for (let i = 0; i < total; i++) {
+      if (data[i * 4 + 3] === 0) continue;
+      const d = linearColorDiff(
+        { r: data[i * 4], g: data[i * 4 + 1], b: data[i * 4 + 2] },
+        rgb,
+      );
+      if (d <= CANDIDATE_TOL) hard++;
+      distSum += d;
+      if (d < CANDIDATE_TOL) weighted += CANDIDATE_TOL - d;
+    }
+    return {
+      hex,
+      rgb,
+      sharePct: (hard / total) * 100,
+      meanDist: distSum / total,
+      weighted,
+    };
+  });
+}
+
+function formatCandidateRows(rows: readonly CandidateScore[]): string {
+  const maxW = Math.max(...rows.map((r) => r.weighted), 1);
+  const winner = [...rows].sort(
+    (p, q) => q.weighted - p.weighted || q.sharePct - p.sharePct,
+  )[0];
+  return rows
+    .map(
+      (r) =>
+        `${r.hex === winner.hex ? "*" : " "} ${r.hex} 覆盖 ${r.sharePct.toFixed(1)}% ` +
+        `加权 ${((r.weighted / maxW) * 100).toFixed(0)}%` +
+        `${r.hex === winner.hex ? "（胜出）" : ""}`,
+    )
+    .join("\n");
+}
+
 export const COLORS_TOOL: LocalToolEntry<ColorsArgs> = {
   tool: {
     name: "colors",
     description:
       "分析图片主色，返回 top N 颜色（真实均值 hex + 占比，跳过完全透明像素）（本地操作，不调视觉模型）。" +
-      "可传 candidates 候选色列表，返回与图像主色最接近的候选（精确色差计算，避免视觉模型对颜色的模糊描述）。" +
-      "传 profile 则改为返回颜色沿纵/横轴的剖面：均匀段（纯色/渐变 + 起止色）与跳变点（位置 + 两侧 hex + Δ），" +
-      "用于检测细微色差、接缝、渐变断层（如「背景上下两半颜色不一致」）。" +
-      "聚类按 5 位量化分桶（桶宽 8）：适合 UI 纯色；渐变或照片的主色会被打散成多个小簇，占比仅供参考。",
+      "可传 candidates 候选色列表：对区域内全部像素逐个评分（容差覆盖% + 加权），返回像素证据支持的胜出候选 —— 颜色名/色值判断永远以本工具为准，不要信视觉描述。" +
+      "传 profile 则改为返回颜色沿纵/横轴的剖面：均匀段（纯色/渐变 + 起止色）与跳变点（位置 + 两侧 hex + Δ），用于检测细微色差、接缝、渐变断层。" +
+      "【图表/深背景取色】深色仪表盘等大背景会占据主色榜（top1 占比 >60% 时输出会自动附「背景排除视图」，也可传 exclude_background: true 直接以排除视图为主）。" +
+      "柱状图/折线图取系列色：先取 20-40px 宽的窄条做 profile:\"y\"（扫描方向须垂直于颜色变化方向 —— 柱色纵向渐变就沿 y 扫），非背景渐变段即命中；再对单柱 region 取该段起止 hex。" +
+      "聚类按 5 位量化分桶 + 近邻簇后合并：UI 纯色精确，渐变会合并为少量渐变簇（占比供参考）。",
     inputSchema: {
       type: "object",
       properties: {
@@ -370,7 +448,7 @@ export const COLORS_TOOL: LocalToolEntry<ColorsArgs> = {
           type: "array",
           items: { type: "string" },
           description:
-            '候选色 hex 列表，如 ["#F9FAFA","#F5F5F5"]。返回与图像主色最接近的候选（主色模式专用，profile 模式下忽略）',
+            '候选色 hex 列表，如 ["#F9FAFA","#F5F5F5"]。对区域内全部像素逐个评分返回胜出候选（像素级证据，非只比主色）',
         },
         profile: {
           type: "string",
@@ -378,6 +456,11 @@ export const COLORS_TOOL: LocalToolEntry<ColorsArgs> = {
           description:
             '剖面模式："y" 按行扫描（检测上下变化 / 水平接缝），"x" 按列扫描（检测左右变化 / 垂直接缝）。' +
             "每行/列取主色后输出渐变段与跳变点，不返回 top N 主色",
+        },
+        exclude_background: {
+          type: "boolean",
+          description:
+            "true 时主列表即「背景排除视图」：与四角采样背景色（Δ≤24）相近的像素剔除后再聚类 —— 深色仪表盘/大背景图取实际内容色用",
         },
       },
       required: ["source"],
@@ -419,7 +502,8 @@ export const COLORS_TOOL: LocalToolEntry<ColorsArgs> = {
 
     const data = image.bitmap.data;
     const total = image.width * image.height;
-    // 量化值仅作聚类键，输出取簇内真实颜色均值（见 createColorClusters）
+    // 量化值仅作聚类键，输出取簇内真实颜色均值（见 createColorClusters）；
+    // 后合并把量化打散的近邻簇并回（Δ≤8），渐变不再碎成一地小簇
     const clusters = createColorClusters();
     let opaque = 0;
     for (let i = 0; i < total; i++) {
@@ -431,51 +515,131 @@ export const COLORS_TOOL: LocalToolEntry<ColorsArgs> = {
       return "图片完全透明，没有不透明像素可分析。";
     }
 
-    const topColors = clusters
-      .result()
-      .slice(0, args.top ?? 5)
-      .map((c) => ({ ...c.rgb, pct: (c.count / opaque) * 100 }));
+    const topN = args.top ?? 5;
+    const bg = sampleBackgroundCorners(data, image.width, image.height);
+    const bgHex = rgbToHex(bg.r, bg.g, bg.b);
 
-    let out =
-      header +
-      "\n" +
-      topColors
-        .map(
-          (c, i) => `${i + 1}. ${rgbToHex(c.r, c.g, c.b)}（${c.pct.toFixed(1)}%）`,
+    /** 背景排除视图：剔除与四角采样背景相近（Δ≤BG_EXCLUDE_DIFF）的像素后聚类 */
+    const excludedView = (): {
+      out: string;
+      kept: number;
+      primary?: Rgb;
+    } => {
+      const ex = createColorClusters();
+      let kept = 0;
+      for (let i = 0; i < total; i++) {
+        if (data[i * 4 + 3] === 0) continue;
+        if (
+          linearColorDiff(
+            { r: data[i * 4], g: data[i * 4 + 1], b: data[i * 4 + 2] },
+            bg,
+          ) <= BG_EXCLUDE_DIFF
         )
-        .join("\n");
+          continue;
+        kept++;
+        ex.add(data[i * 4], data[i * 4 + 1], data[i * 4 + 2]);
+      }
+      if (kept === 0) {
+        return {
+          out: `背景排除视图（背景=${bgHex}）：剔除后没有剩余像素 —— 整图都是背景色。`,
+          kept: 0,
+        };
+      }
+      const merged = mergeClusters(ex.result());
+      const rows = merged
+        .slice(0, topN)
+        .map((c) => ({ ...c.rgb, pct: (c.count / kept) * 100 }));
+      return {
+        out:
+          `背景排除视图（背景=四角采样 ${bgHex}，Δ≤${BG_EXCLUDE_DIFF} 已剔除，` +
+          `占比按剩余 ${kept} 像素计；若四角不是背景可忽略本段）：\n` +
+          rows
+            .map(
+              (c, i) => `${i + 1}. ${rgbToHex(c.r, c.g, c.b)}（${c.pct.toFixed(1)}%）`,
+            )
+            .join("\n"),
+        kept,
+        primary: merged[0]?.rgb,
+      };
+    };
 
-    // 近邻簇提示：多个主色彼此只差几个点，往往是细微色差/渐变的第一个信号
-    //（视觉模型对此系统性失明），也可能是量化跨桶 —— 提示交给调用方判断
-    const nearPairs: string[] = [];
-    for (let i = 0; i < topColors.length; i++) {
-      for (let j = i + 1; j < topColors.length; j++) {
-        const d = linearColorDiff(topColors[i], topColors[j]);
-        if (d > 0 && d <= NEAR_CLUSTER_DIFF) {
-          nearPairs.push(`第${i + 1}/${j + 1}号色 Δ=${Math.round(d)}`);
+    let out: string;
+    let domRgb: Rgb | undefined;
+    if (args.exclude_background) {
+      const view = excludedView();
+      domRgb = view.primary;
+      out = `${header}\n${view.out}`;
+    } else {
+      const merged = mergeClusters(clusters.result());
+      domRgb = merged[0]?.rgb;
+      const topColors = merged
+        .slice(0, topN)
+        .map((c) => ({ ...c.rgb, pct: (c.count / opaque) * 100 }));
+      out =
+        header +
+        "\n" +
+        topColors
+          .map(
+            (c, i) => `${i + 1}. ${rgbToHex(c.r, c.g, c.b)}（${c.pct.toFixed(1)}%）`,
+          )
+          .join("\n");
+
+      // 近邻簇提示：多个主色彼此只差几个点，往往是细微色差/渐变的第一个信号
+      //（视觉模型对此系统性失明），也可能是量化跨桶 —— 提示交给调用方判断
+      const nearPairs: string[] = [];
+      for (let i = 0; i < topColors.length; i++) {
+        for (let j = i + 1; j < topColors.length; j++) {
+          const d = linearColorDiff(topColors[i], topColors[j]);
+          if (d > 0 && d <= NEAR_CLUSTER_DIFF) {
+            nearPairs.push(`第${i + 1}/${j + 1}号色 Δ=${Math.round(d)}`);
+          }
+        }
+      }
+      if (nearPairs.length > 0) {
+        out +=
+          `\n⚠ 相近簇：${nearPairs.join("；")} —— 可能存在细微色差或渐变（也可能是量化跨桶）。` +
+          `可用 region 分区对比，或 profile:"y"/"x" 查看颜色结构`;
+      }
+
+      // 背景统治形态自救：top1 占比过高时主色榜几乎全是背景，
+      // 自动追加背景排除视图（只加段不动已有行，追加式披露）
+      if (topColors[0] && topColors[0].pct > BG_DOMINANT_TRIGGER_PCT) {
+        const view = excludedView();
+        if (view.kept > 0) {
+          out += `\n\n${view.out}`;
         }
       }
     }
-    if (nearPairs.length > 0) {
-      out +=
-        `\n⚠ 相近簇：${nearPairs.join("；")} —— 可能存在细微色差或渐变（也可能是量化跨桶）。` +
-        `可用 region 分区对比，或 profile:"y"/"x" 查看颜色结构`;
-    }
 
-    if (args.candidates?.length && topColors.length > 0) {
-      const dom = topColors[0];
+    if (args.candidates?.length && domRgb) {
+      // 兼容行：主色（或背景排除后的主色）与候选的最近距离 —— 保留旧语义
       let best = args.candidates[0];
       let bestDiff = Infinity;
       for (const cand of args.candidates) {
         // hexToRgb 校验失败抛 ImageError，绝不静默产出 NaN
         const rgb = hexToRgb(cand);
-        const diff = linearColorDiff(dom, rgb);
+        const diff = linearColorDiff(domRgb, rgb);
         if (diff < bestDiff) {
           bestDiff = diff;
           best = cand;
         }
       }
-      out += `\n主色 ${rgbToHex(dom.r, dom.g, dom.b)} 最接近候选色 ${best}（色差 ${bestDiff.toFixed(0)}/255）`;
+      out += `\n主色 ${rgbToHex(domRgb.r, domRgb.g, domRgb.b)} 最接近候选色 ${best}（色差 ${bestDiff.toFixed(0)}/255）`;
+
+      // 逐像素评分：像素证据选出的胜出者可能与「最接近主色」不同 ——
+      // 背景淹没场景（主色=背景）下两者分歧正是旧算法的病灶，两个都给出交给调用方
+      const rows = scoreCandidates(data, total, args.candidates);
+      const winner = [...rows].sort(
+        (p, q) => q.weighted - p.weighted || q.sharePct - p.sharePct,
+      )[0];
+      out +=
+        `\n候选逐像素评分（容差 ${CANDIDATE_TOL}；覆盖% = 区域内色差≤${CANDIDATE_TOL} 的像素占比，加权优先精确落色）：\n` +
+        formatCandidateRows(rows);
+      if (winner.hex.toLowerCase() !== best.toLowerCase()) {
+        out +=
+          `\n注意：像素评分胜出者 ${winner.hex} 与「最接近主色」${best} 不同 —— ` +
+          `主色可能是背景，优先采信覆盖/加权更高的 ${winner.hex}`;
+      }
     }
     return out;
   },

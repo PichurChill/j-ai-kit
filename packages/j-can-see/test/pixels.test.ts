@@ -283,6 +283,27 @@ describe("COLORS_TOOL", () => {
     expect(text).toContain("最接近候选色 #ff0000");
   });
 
+  it("candidates 逐像素评分：给出覆盖率与加权证据（0.8.0 新增）", async () => {
+    // 背景占 ~91%：像素评分胜出者是背景本身（多数即证据），
+    // 覆盖率/加权数字是比旧「单一色差值」强的证据链
+    const img = new Jimp({ width: 100, height: 100, color: 0x0b193cff });
+    img.composite(new Jimp({ width: 30, height: 30, color: 0xff8800ff }), 35, 35);
+    const png = await img.getBuffer("image/png");
+    const text = await runLocal(
+      COLORS_TOOL,
+      {
+        source: "x.png",
+        candidates: ["#0b193c", "#ff8800"],
+      },
+      { reader: readerFrom({ "x.png": png }) },
+    );
+    expect(text).toContain("最接近候选色 #0b193c"); // 兼容行保留旧语义
+    expect(text).toContain("候选逐像素评分");
+    expect(text).toContain("覆盖 9"); // 橙色块 900/10000 = 9%
+    expect(text).toMatch(/#0b193c 覆盖 9\d?\.\d%/); // 背景覆盖 ~91%
+    expect(text).toContain("（胜出）");
+  });
+
   it("candidates 含非法 hex 时抛 ImageError（不静默返回错误候选）", async () => {
     const png = await makePng(50, 50, 0xff0000ff);
     await expect(
@@ -329,8 +350,23 @@ describe("COLORS_TOOL", () => {
     expect(text).toContain("原图 50×50");
   });
 
-  it("相近簇（Δ≤16）触发提示：可能存在细微色差或渐变", async () => {
-    // 左右两半只差 ΔR=6 —— 视觉模型看不出的细微色差
+  it("相近簇（9≤Δ≤16）触发提示：可能存在细微色差或渐变", async () => {
+    // 左右两半差 ΔR=11 —— 后合并只并 Δ≤8 的簇，9-16 的近邻保留两簇并提示
+    const img = new Jimp({ width: 40, height: 20, color: 0x6cceffff });
+    img.composite(new Jimp({ width: 20, height: 20, color: 0x61ccffff }), 20, 0);
+    const png = await img.getBuffer("image/png");
+    const text = await runLocal(
+      COLORS_TOOL,
+      { source: "x.png" },
+      { reader: readerFrom({ "x.png": png }) },
+    );
+    expect(text).toContain("相近簇");
+    expect(text).toContain("Δ=11");
+    expect(text).toContain("profile");
+  });
+
+  it("更近的簇（Δ≤8）被后合并为单簇，不再提示相近（0.8.0 行为变化）", async () => {
+    // ΔR=6：旧版报「相近簇 Δ=6」，现按像素数加权均值并成一簇（渐变碎簇收敛）
     const img = new Jimp({ width: 40, height: 20, color: 0x6cceffff });
     img.composite(new Jimp({ width: 20, height: 20, color: 0x66ccffff }), 20, 0);
     const png = await img.getBuffer("image/png");
@@ -339,9 +375,40 @@ describe("COLORS_TOOL", () => {
       { source: "x.png" },
       { reader: readerFrom({ "x.png": png }) },
     );
-    expect(text).toContain("相近簇");
-    expect(text).toContain("Δ=6");
-    expect(text).toContain("profile");
+    // 单簇 100% + 均值落在 #69 附近（合成边界有 1 列抗锯齿，允许 ±1）
+    expect(text).toContain("100.0%");
+    expect(text).toMatch(/1\. #69c[de]f{1,2}\b/);
+    expect(text).not.toContain("相近簇");
+  });
+
+  it("背景统治图（top1>60%）自动追加背景排除视图，内容色浮出", async () => {
+    // 深背景 #0b193c 占 ~90% + 中央橙色块 #ff8800 —— 主色榜被背景淹没
+    const img = new Jimp({ width: 100, height: 100, color: 0x0b193cff });
+    img.composite(new Jimp({ width: 30, height: 30, color: 0xff8800ff }), 35, 35);
+    const png = await img.getBuffer("image/png");
+    const text = await runLocal(
+      COLORS_TOOL,
+      { source: "x.png" },
+      { reader: readerFrom({ "x.png": png }) },
+    );
+    // 主列表（含背景）保持原样 + 追加排除视图（只加段不动已有行）
+    expect(text).toContain("#0b193c");
+    expect(text).toContain("背景排除视图");
+    expect(text).toContain("#ff8800");
+  });
+
+  it("exclude_background: true 时主列表即背景排除视图", async () => {
+    const img = new Jimp({ width: 100, height: 100, color: 0x0b193cff });
+    img.composite(new Jimp({ width: 30, height: 30, color: 0xff8800ff }), 35, 35);
+    const png = await img.getBuffer("image/png");
+    const text = await runLocal(
+      COLORS_TOOL,
+      { source: "x.png", exclude_background: true },
+      { reader: readerFrom({ "x.png": png }) },
+    );
+    expect(text).toContain("背景排除视图");
+    // 排除视图首个列表行应是内容色（头部说明里的背景 hex 不算数）
+    expect(text).toMatch(/背景排除视图（[^\n]+\n1\. #ff8800/);
   });
 
   it("纯色图不触发相近簇提示", async () => {
@@ -448,5 +515,73 @@ describe("segmentAxisProfile（纯函数）", () => {
     const { segments, jumps } = segmentAxisProfile([]);
     expect(segments).toEqual([]);
     expect(jumps).toEqual([]);
+  });
+});
+
+describe("图表取色（0.8.0 目标场景：堆叠柱状图系列色）", () => {
+  /** 合成堆叠柱图：深底 + 网格 + 3 根柱（上段蓝渐变 #6aa3f2→#3160a5，下段青渐变 #6fe2ff→#2e86ad） */
+  async function stackedBarPng(): Promise<{ png: Buffer; barXs: [number, number] }> {
+    const W = 100, H = 80;
+    const img = new Jimp({ width: W, height: H, color: 0x0b193cff });
+    const d = img.bitmap.data;
+    const set = (x: number, y: number, r: number, g: number, b: number) => {
+      const o = (y * W + x) * 4;
+      d[o] = r; d[o + 1] = g; d[o + 2] = b; d[o + 3] = 255;
+    };
+    // 网格线
+    for (let y = 24; y <= 72; y += 24) for (let x = 0; x < W; x++) set(x, y, 0x16, 0x26, 0x4f);
+    const upper: [number, number, number][] = [[0x6a, 0xa3, 0xf2], [0x31, 0x60, 0xa5]];
+    const lower: [number, number, number][] = [[0x6f, 0xe2, 0xff], [0x2e, 0x86, 0xad]];
+    const lerp = (a: [number, number, number], b: [number, number, number], t: number) =>
+      a.map((v, i) => Math.round(v + (b[i] - v) * t)) as [number, number, number];
+    const x0 = 20, bw = 16, lowerH = 20, upperH = 30, yBase = 76;
+    for (let x = x0; x < x0 + bw; x++) {
+      for (let k = 0; k < lowerH; k++) {
+        const c = lerp(lower[0], lower[1], k / lowerH);
+        set(x, yBase - 1 - k, c[0], c[1], c[2]);
+      }
+      for (let k = 0; k < upperH; k++) {
+        const c = lerp(upper[0], upper[1], k / upperH);
+        set(x, yBase - 1 - lowerH - k, c[0], c[1], c[2]);
+      }
+    }
+    return { png: await img.getBuffer("image/png"), barXs: [x0 + 2, x0 + bw - 2] };
+  }
+
+  it("单柱窄条 profile:y 一次拿全两段渐变的起止 hex（那次手写 PIL 的确定性等价物）", async () => {
+    const { png, barXs } = await stackedBarPng();
+    const text = await runLocal(
+      COLORS_TOOL,
+      { source: "x.png", region: `${barXs[0]},0,${barXs[1]},80`, profile: "y" },
+      { reader: readerFrom({ "x.png": png }) },
+    );
+    // 上段渐变两端 + 下段渐变两端全部命中（Δ≤6）
+    for (const gt of ["#6aa3f2", "#3160a5", "#6fe2ff", "#2e86ad"]) {
+      const [gr, gg, gb] = [1, 3, 5].map((i) => parseInt(gt.slice(i, i + 2), 16));
+      const hit = [...text.matchAll(/#[0-9a-f]{6}/gi)].some((m) => {
+        const [r, g, b] = [1, 3, 5].map((i) => parseInt(m[0].slice(i, i + 2), 16));
+        return Math.max(Math.abs(r - gr), Math.abs(g - gg), Math.abs(b - gb)) <= 6;
+      });
+      expect(hit, `应命中 ${gt}`).toBe(true);
+    }
+  });
+
+  it("exclude_background 主列表被柱色占据（深底不再淹没）", async () => {
+    const { png } = await stackedBarPng();
+    const text = await runLocal(
+      COLORS_TOOL,
+      { source: "x.png", exclude_background: true },
+      { reader: readerFrom({ "x.png": png }) },
+    );
+    const rows = text.split("\n").filter((l) => /^\d+\. #/.test(l)).slice(0, 3).join(" ");
+    // 前 3 主色不应再是背景/网格色
+    for (const bg of ["#0b193c", "#16264f"]) {
+      const [br, bbg, bb] = [1, 3, 5].map((i) => parseInt(bg.slice(i, i + 2), 16));
+      const hit = [...rows.matchAll(/#[0-9a-f]{6}/gi)].some((m) => {
+        const [r, g, b] = [1, 3, 5].map((i) => parseInt(m[0].slice(i, i + 2), 16));
+        return Math.max(Math.abs(r - br), Math.abs(g - bbg), Math.abs(b - bb)) <= 12;
+      });
+      expect(hit, `前 3 主色不应包含背景 ${bg}`).toBe(false);
+    }
   });
 });

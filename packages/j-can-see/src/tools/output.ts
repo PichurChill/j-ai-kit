@@ -28,7 +28,11 @@ export async function writeOutput(
 ): Promise<void> {
   try {
     await fs.mkdir(dirname(path), { recursive: true });
-    await fs.writeFile(path, data);
+    // 原子写：先写同目录临时文件再 rename —— 进程中途被杀不会留下半截文件
+    //（旧版直接 writeFile，崩溃瞬间的目标文件无法区分完整/损坏）
+    const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
+    await fs.writeFile(tmp, data);
+    await fs.rename(tmp, path);
   } catch (e) {
     throw new ImageError(
       `写入输出文件失败（目录无法创建或无权限）：${path}：${
