@@ -1,12 +1,16 @@
 /**
  * 视觉调用：把 base64 图片交给视觉模型，返回文本描述。
  *
- * 支持三种上游 API 规范（由 J_SEE_API_SPEC 选择）：
+ * 支持四种上游 API 规范（由 J_SEE_API_SPEC 选择）：
  *  - responses：OpenAI Responses（/v1/responses），GPT-5 / Codex 原生接口，
  *    与 cc switch / Codex 生态对齐（默认）
  *  - openai：OpenAI Chat Completions（/v1/chat/completions），兼容所有
  *    OpenAI 兼容代理（OpenRouter / LiteLLM / CLIProxyAPI / one-api 等）
  *  - anthropic：Anthropic Messages（/v1/messages），可直连 Claude 原生 API
+ *  - gemini：Google Gemini 原生 generateContent
+ *    （/v1beta/models/{model}:generateContent），直连 AI Studio key；
+ *    不走 Gemini 的 OpenAI 兼容层——实测兼容层拒绝 j-can-see 必发的
+ *    reasoning_effort 字段（400），且 URL 拼接依赖多余的 /v1 恰好被路由
  *
  * 实现要点（均来自实测，非猜测）：
  * 1. 强制 User-Agent —— CF bot 防护会对默认/空 UA 返回 403
@@ -173,6 +177,47 @@ function buildAnthropicRequest(
   };
 }
 
+/**
+ * Gemini 原生 generateContent 请求。
+ * 实测（AI Studio key）：
+ *  - 字段用 camelCase（inlineData / mimeType / maxOutputTokens）被接受；
+ *    snake_case 同样可用，这里统一取 REST 文档规范的 camelCase
+ *  - 鉴权走 x-goog-api-key 头，不是 Authorization: Bearer
+ *  - 不映射 J_SEE_REASONING —— thinking 模型（如 gemini-3.x-flash）无法关闭
+ *    思考：thinkingBudget:0 与 thinkingLevel:"none" 实测均 400。与 anthropic
+ *    分支同立场，不强行映射，保持默认（模型自选思考档位）
+ *  - J_SEE_BASE_URL 必须是根地址（https://generativelanguage.googleapis.com），
+ *    本函数自行补 /v1beta/models/{model}:generateContent
+ */
+function buildGeminiRequest(
+  input: VisionInput,
+  config: AppConfig,
+): VisionRequest {
+  return {
+    url: `${config.J_SEE_BASE_URL}/v1beta/models/${config.J_SEE_MODEL}:generateContent`,
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": config.J_SEE_TOKEN,
+      "User-Agent": USER_AGENT,
+    },
+    body: JSON.stringify({
+      contents: [
+        {
+          parts: [
+            ...input.images.map((img) => ({
+              inlineData: { mimeType: img.mime, data: img.base64 },
+            })),
+            { text: input.prompt },
+          ],
+        },
+      ],
+      generationConfig: {
+        maxOutputTokens: input.maxTokens ?? DEFAULT_MAX_TOKENS,
+      },
+    }),
+  };
+}
+
 /** 按规范选择请求构造器 */
 function buildRequest(
   input: VisionInput,
@@ -188,9 +233,11 @@ function buildRequest(
       return buildOpenAIRequest(input, config);
     case "anthropic":
       return buildAnthropicRequest(input, config);
+    case "gemini":
+      return buildGeminiRequest(input, config);
     default:
       throw new VisionError(
-        `不支持的 J_SEE_API_SPEC: ${JSON.stringify(config.J_SEE_API_SPEC)}，支持 responses / openai / anthropic`,
+        `不支持的 J_SEE_API_SPEC: ${JSON.stringify(config.J_SEE_API_SPEC)}，支持 responses / openai / anthropic / gemini`,
         { kind: "client" },
       );
   }
@@ -256,6 +303,34 @@ function parseAnthropicContent(data: unknown): string {
   return text;
 }
 
+/**
+ * Gemini generateContent 返回：拼接 candidates[0].content.parts[] 的 text。
+ * 实测每个 part 除 text 外还带 thoughtSignature（思考签名），只取 text；
+ * finishReason 为 MAX_TOKENS 时文本可能被截断，但仍有内容可用，不特殊处理。
+ * 无 candidates（安全屏蔽 / 全空）视为空。
+ */
+function parseGeminiContent(data: unknown): string {
+  const candidates = (
+    data as {
+      candidates?: ReadonlyArray<{
+        content?: { parts?: ReadonlyArray<{ text?: unknown }> };
+      }>;
+    }
+  )?.candidates;
+  const parts =
+    Array.isArray(candidates) && candidates.length > 0
+      ? candidates[0]?.content?.parts
+      : undefined;
+  const text =
+    Array.isArray(parts) && parts.length > 0
+      ? parts.map((p) => String(p?.text ?? "")).join("")
+      : "";
+  if (text.length === 0) {
+    throw new VisionError("视觉调用返回内容为空", { kind: "empty" });
+  }
+  return text;
+}
+
 /** 按规范选择响应解析器 */
 function parseContent(data: unknown, config: AppConfig): string {
   switch (config.J_SEE_API_SPEC) {
@@ -266,9 +341,11 @@ function parseContent(data: unknown, config: AppConfig): string {
       return parseOpenAIContent(data);
     case "anthropic":
       return parseAnthropicContent(data);
+    case "gemini":
+      return parseGeminiContent(data);
     default:
       throw new VisionError(
-        `不支持的 J_SEE_API_SPEC: ${JSON.stringify(config.J_SEE_API_SPEC)}，支持 responses / openai / anthropic`,
+        `不支持的 J_SEE_API_SPEC: ${JSON.stringify(config.J_SEE_API_SPEC)}，支持 responses / openai / anthropic / gemini`,
         { kind: "client" },
       );
   }

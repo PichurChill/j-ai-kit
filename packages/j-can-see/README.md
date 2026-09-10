@@ -90,7 +90,7 @@ J_SEE_MODEL = "grok-4.5"
 | `J_SEE_TOKEN` | Yes | - | Vision model API key |
 | `J_SEE_BASE_URL` | Yes | - | Vision endpoint base URL; trailing slashes are stripped |
 | `J_SEE_MODEL` | Yes | - | Vision model name supported by your endpoint |
-| `J_SEE_API_SPEC` | No | `responses` | `responses` / `openai` / `anthropic` |
+| `J_SEE_API_SPEC` | No | `responses` | `responses` / `openai` / `anthropic` / `gemini` |
 | `J_SEE_REASONING` | No | `none` | Reasoning effort; only used by the `openai` spec |
 | `J_SEE_MAX_EDGE` | No | `1568` | Max long-edge pixels for image compression |
 | `J_SEE_MAX_BYTES` | No | `52428800` | Max source file size in bytes |
@@ -111,6 +111,7 @@ The server still starts without `J_SEE_TOKEN` / `J_SEE_BASE_URL` / `J_SEE_MODEL`
 | `responses` (default) | `/v1/responses` | OpenAI Responses, aligned with GPT-5 / Codex ecosystem |
 | `openai` | `/v1/chat/completions` | OpenAI Chat Completions and OpenAI-compatible proxies |
 | `anthropic` | `/v1/messages` | Anthropic native API, no proxy needed |
+| `gemini` | `/v1beta/models/{model}:generateContent` | Google Gemini native API (AI Studio key), no proxy needed |
 
 If your endpoint returns 404 for `/v1/responses`, set `J_SEE_API_SPEC=openai`. To call Anthropic directly:
 
@@ -122,6 +123,19 @@ claude mcp add j-can-see -s user \
     -e J_SEE_MODEL='claude-sonnet-4-5' \
     -- npx -y j-can-see
 ```
+
+To call Gemini directly ([free AI Studio key](https://aistudio.google.com)):
+
+```bash
+claude mcp add j-can-see -s user \
+    -e J_SEE_API_SPEC='gemini' \
+    -e J_SEE_TOKEN='AIza...' \
+    -e J_SEE_BASE_URL='https://generativelanguage.googleapis.com' \
+    -e J_SEE_MODEL='gemini-3.6-flash' \
+    -- npx -y j-can-see
+```
+
+Two notes on the `gemini` spec: `J_SEE_BASE_URL` must be the **root** URL (no `/v1beta` — the path is appended here; and do not use `/v1beta/openai`, Gemini's OpenAI-compat layer, which in practice rejects the `reasoning_effort` field the `openai` spec always sends); and Gemini thinking models cannot disable thinking, so the `gemini` spec never sends a `J_SEE_REASONING` field.
 
 ## Tools
 

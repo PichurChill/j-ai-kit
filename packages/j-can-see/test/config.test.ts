@@ -33,7 +33,7 @@ describe("loadBaseConfig", () => {
   });
 
   it("base 项非法时仍抛 ConfigError（如非法 API_SPEC）", () => {
-    expect(() => loadBaseConfig({ J_SEE_API_SPEC: "gemini" })).toThrow(
+    expect(() => loadBaseConfig({ J_SEE_API_SPEC: "bogus" })).toThrow(
       /J_SEE_API_SPEC/,
     );
   });
@@ -121,7 +121,7 @@ describe("loadConfig", () => {
     ).toThrow();
   });
 
-  it("API_SPEC 默认 responses，可显式设为 openai / anthropic", () => {
+  it("API_SPEC 默认 responses，可显式设为 openai / anthropic / gemini", () => {
     expect(loadConfig(BASE).J_SEE_API_SPEC).toBe("responses");
     expect(
       loadConfig({ ...BASE, J_SEE_API_SPEC: "openai" }).J_SEE_API_SPEC,
@@ -129,11 +129,14 @@ describe("loadConfig", () => {
     expect(
       loadConfig({ ...BASE, J_SEE_API_SPEC: "anthropic" }).J_SEE_API_SPEC,
     ).toBe("anthropic");
+    expect(
+      loadConfig({ ...BASE, J_SEE_API_SPEC: "gemini" }).J_SEE_API_SPEC,
+    ).toBe("gemini");
   });
 
   it("API_SPEC 非法值抛错", () => {
     expect(() =>
-      loadConfig({ ...BASE, J_SEE_API_SPEC: "gemini" }),
+      loadConfig({ ...BASE, J_SEE_API_SPEC: "bogus" }),
     ).toThrow();
   });
 });

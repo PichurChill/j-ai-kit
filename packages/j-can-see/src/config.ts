@@ -41,8 +41,12 @@ const baseEnvSchema = z.object({
   //  - openai = OpenAI Chat Completions（/v1/chat/completions），兼容所有
   //    OpenAI 兼容代理（OpenRouter / LiteLLM / CLIProxyAPI / one-api 等）
   //  - anthropic = Anthropic Messages（/v1/messages），可直连 Claude 原生 API
+  //  - gemini = Google Gemini 原生 generateContent
+  //    （/v1beta/models/{model}:generateContent + x-goog-api-key），
+  //    直连 Google AI Studio key；J_SEE_BASE_URL 填根地址
+  //    （https://generativelanguage.googleapis.com，不带 /v1beta/openai）
   J_SEE_API_SPEC: z
-    .enum(["responses", "openai", "anthropic"])
+    .enum(["responses", "openai", "anthropic", "gemini"])
     .default("responses"),
 
   // 推理强度。实测 CLIProxyAPI 转换层不会把 none 真正关到 0，

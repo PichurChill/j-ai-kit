@@ -1,6 +1,6 @@
 {
   "name": "j-can-see",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "MCP server that gives text-only AI coding agents a vision toolkit: describe/OCR images, locate elements with pixel coordinates, diff images, pick exact colors, trace SVGs — for clients whose primary model has no multimodal input.",
   "license": "MIT",
   "repository": {

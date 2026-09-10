@@ -282,7 +282,7 @@ describe("callVision", () => {
       await expect(
         callVision(
           INPUT,
-          { ...config, J_SEE_API_SPEC: "gemini" as never },
+          { ...config, J_SEE_API_SPEC: "bogus" as never },
           f,
         ),
       ).rejects.toThrow(/不支持的 J_SEE_API_SPEC/);
@@ -358,6 +358,134 @@ describe("callVision", () => {
       await callVision(INPUT, responsesConfig, noLimit);
       body = JSON.parse(noLimit.calls[0][1].body as string);
       expect(body.max_output_tokens).toBeUndefined();
+    });
+  });
+
+  describe("gemini 规范", () => {
+    const geminiConfig: AppConfig = {
+      ...config,
+      J_SEE_API_SPEC: "gemini",
+      J_SEE_MODEL: "gemini-3.6-flash",
+    };
+
+    // 实测响应结构：candidates[0].content.parts[] 每项除 text 外还带
+    // thoughtSignature（思考签名），解析必须只取 text
+    const geminiBody = (text: string) => ({
+      candidates: [
+        { content: { parts: [{ text, thoughtSignature: "SIG" }] } },
+      ],
+    });
+
+    it("成功返回文本，URL 拼 /v1beta/models/{model}:generateContent + x-goog-api-key", async () => {
+      const f = mockFetch({ ok: true, body: geminiBody("红色") });
+      const out = await callVision(INPUT, geminiConfig, f);
+      expect(out).toBe("红色");
+
+      const [url, init] = f.calls[0];
+      expect(url).toBe(
+        "https://example.com/v1beta/models/gemini-3.6-flash:generateContent",
+      );
+      const headers = init.headers as Record<string, string>;
+      expect(headers["x-goog-api-key"]).toBe("tok");
+      // 原生鉴权走 x-goog-api-key，不发 Authorization: Bearer
+      expect(headers["Authorization"]).toBeUndefined();
+      expect(headers["User-Agent"]).toMatch(/j-can-see/);
+
+      const body = JSON.parse(init.body as string);
+      // 模型名在 URL 里，body 不重复带 model 字段
+      expect(body.model).toBeUndefined();
+      // 不映射 J_SEE_REASONING：既无 openai 的 reasoning_effort，
+      // 也无 thinkingConfig（thinking 模型关思考实测 400）
+      expect(body.reasoning_effort).toBeUndefined();
+      expect(body.generationConfig.thinkingConfig).toBeUndefined();
+      // camelCase 字段 + prompt 作为最后一个 text part
+      const parts = body.contents[0].parts;
+      expect(parts[0].inlineData.mimeType).toBe("image/jpeg");
+      expect(parts[0].inlineData.data).toBe("AAA");
+      expect(parts[1].text).toBe("描述");
+    });
+
+    it("多图：每张图一个 inlineData part，text part 在最后", async () => {
+      const f = mockFetch({ ok: true, body: geminiBody("对比结果") });
+      await callVision(
+        {
+          images: [
+            { base64: "AAA", mime: "image/jpeg" },
+            { base64: "BBB", mime: "image/png" },
+          ],
+          prompt: "两张图有什么不同",
+        },
+        geminiConfig,
+        f,
+      );
+      const parts = JSON.parse(f.calls[0][1].body as string).contents[0].parts;
+      expect(parts).toHaveLength(3);
+      expect(parts[0].inlineData.mimeType).toBe("image/jpeg");
+      expect(parts[0].inlineData.data).toBe("AAA");
+      expect(parts[1].inlineData.mimeType).toBe("image/png");
+      expect(parts[1].inlineData.data).toBe("BBB");
+      expect(parts[2].text).toBe("两张图有什么不同");
+    });
+
+    it("多 part 文本拼接（跳过无 text 的 part）", async () => {
+      const f = mockFetch({
+        ok: true,
+        body: {
+          candidates: [
+            {
+              content: {
+                parts: [
+                  { text: "红色" },
+                  { thoughtSignature: "只有签名无文本" },
+                  { text: "方块" },
+                ],
+              },
+            },
+          ],
+        },
+      });
+      const out = await callVision(INPUT, geminiConfig, f);
+      expect(out).toBe("红色方块");
+    });
+
+    it("maxTokens 映射为 generationConfig.maxOutputTokens；省略时默认 2000", async () => {
+      const withLimit = mockFetch({ ok: true, body: geminiBody("ok") });
+      await callVision({ ...INPUT, maxTokens: 8192 }, geminiConfig, withLimit);
+      expect(
+        JSON.parse(withLimit.calls[0][1].body as string).generationConfig
+          .maxOutputTokens,
+      ).toBe(8192);
+
+      const noLimit = mockFetch({ ok: true, body: geminiBody("ok") });
+      await callVision(INPUT, geminiConfig, noLimit);
+      expect(
+        JSON.parse(noLimit.calls[0][1].body as string).generationConfig
+          .maxOutputTokens,
+      ).toBe(2000);
+    });
+
+    it("无 candidates 抛错", async () => {
+      const f = mockFetch({ ok: true, body: { candidates: [] } });
+      await expect(callVision(INPUT, geminiConfig, f)).rejects.toThrow(/为空/);
+    });
+
+    it("parts 仅含 thoughtSignature（无 text）视为空", async () => {
+      const f = mockFetch({
+        ok: true,
+        body: { candidates: [{ content: { parts: [{ thoughtSignature: "S" }] } }] },
+      });
+      await expect(callVision(INPUT, geminiConfig, f)).rejects.toThrow(/为空/);
+    });
+
+    it("401 抛 VisionError 且携带 status", async () => {
+      const f = mockFetch({
+        ok: false,
+        status: 401,
+        body: { error: { message: "API key not valid" } },
+      });
+      await expect(
+        callVision(INPUT, geminiConfig, f),
+      ).rejects.toMatchObject({ name: "VisionError", status: 401 });
     });
   });
 

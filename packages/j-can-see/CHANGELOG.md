@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.0] - 2026-09-10
+
+### Added
+
+- **`J_SEE_API_SPEC=gemini`：直连 Google Gemini 原生 API**（`src/vision.ts` / `src/config.ts`）。动机：真实会话中用户拿 AI Studio 免费 key 配 `openai` 规范，每次调用稳定 400 —— 实测 Gemini 的 OpenAI 兼容层（`/v1beta/openai`）拒绝 `openai` 分支必发的 `reasoning_effort` 字段，且该分支的 URL 拼接依赖「多余 `/v1` 恰好被兼容层路由」这种脆弱行为。新增 `buildGeminiRequest` / `parseGeminiContent`：`POST {base}/v1beta/models/{model}:generateContent` + `x-goog-api-key` 头 + camelCase `inlineData`/`maxOutputTokens`（实测 200），解析 `candidates[0].content.parts[].text`（跳过仅含 `thoughtSignature` 的 part）
+  - `gemini` 规范不映射 `J_SEE_REASONING`：thinking 模型（gemini-3.x-flash）关思考的两种写法（`thinkingBudget:0` / `thinkingLevel:"none"`）实测均 400，与 anthropic 分支同立场不强行映射
+  - `J_SEE_BASE_URL` 填根地址 `https://generativelanguage.googleapis.com`（不带 `/v1beta`，路径由本包补全）；README 中英均补直连示例与两条注意事项
+
 ## [0.9.0] - 2026-09-10
 
 ### Changed

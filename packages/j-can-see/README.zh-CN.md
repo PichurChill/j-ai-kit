@@ -90,7 +90,7 @@ J_SEE_MODEL = "grok-4.5"
 | `J_SEE_TOKEN` | 是 | - | 视觉模型 API key |
 | `J_SEE_BASE_URL` | 是 | - | 视觉模型端点根地址；末尾斜杠自动去除 |
 | `J_SEE_MODEL` | 是 | - | 你的端点实际支持的视觉模型名 |
-| `J_SEE_API_SPEC` | 否 | `responses` | `responses` / `openai` / `anthropic` |
+| `J_SEE_API_SPEC` | 否 | `responses` | `responses` / `openai` / `anthropic` / `gemini` |
 | `J_SEE_REASONING` | 否 | `none` | 推理强度；仅 `openai` 规范生效 |
 | `J_SEE_MAX_EDGE` | 否 | `1568` | 图片压缩长边像素上限 |
 | `J_SEE_MAX_BYTES` | 否 | `52428800` | 源文件体积上限（字节） |
@@ -111,6 +111,7 @@ J_SEE_MODEL = "grok-4.5"
 | `responses`（默认） | `/v1/responses` | OpenAI Responses，与 GPT-5 / Codex 生态对齐 |
 | `openai` | `/v1/chat/completions` | OpenAI Chat Completions 及兼容代理 |
 | `anthropic` | `/v1/messages` | Anthropic 原生 API，无需代理 |
+| `gemini` | `/v1beta/models/{model}:generateContent` | Google Gemini 原生 API（AI Studio key），无需代理 |
 
 如果端点不支持 `/v1/responses`（返回 404），设 `J_SEE_API_SPEC=openai`。直连 Claude：
 
@@ -122,6 +123,19 @@ claude mcp add j-can-see -s user \
     -e J_SEE_MODEL='claude-sonnet-4-5' \
     -- npx -y j-can-see
 ```
+
+直连 Gemini（[AI Studio](https://aistudio.google.com) 免费 key）：
+
+```bash
+claude mcp add j-can-see -s user \
+    -e J_SEE_API_SPEC='gemini' \
+    -e J_SEE_TOKEN='AIza...' \
+    -e J_SEE_BASE_URL='https://generativelanguage.googleapis.com' \
+    -e J_SEE_MODEL='gemini-3.6-flash' \
+    -- npx -y j-can-see
+```
+
+`gemini` 规范注意两点：`J_SEE_BASE_URL` 填**根地址**（不带 `/v1beta`——路径由本包补全；也不要用 `/v1beta/openai`，那是 Gemini 的 OpenAI 兼容层，实测拒绝 `openai` 规范必发的 `reasoning_effort` 字段）；Gemini 的 thinking 模型无法关闭思考，`gemini` 规范不发送 `J_SEE_REASONING` 对应字段。
 
 ## 工具集
 
